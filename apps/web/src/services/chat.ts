@@ -17,10 +17,12 @@ export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
 }
 
 export type StreamCallbacks = {
+  onMeta?: (conversationId: string) => void;
   onDelta: (content: string) => void;
   onDone: (info: Omit<ChatStreamDone, "type">) => void;
   onError: (err: Omit<ChatStreamError, "type">) => void;
   signal?: AbortSignal;
+  conversationId?: string;
 };
 
 // Fetch-based streaming client. Axios can't read a chunked response body in
@@ -29,10 +31,12 @@ export type StreamCallbacks = {
 // axios interceptor uses (see services/session-refresh.ts) and retry once.
 export async function streamChat(
   messages: ChatMessage[],
-  { onDelta, onDone, onError, signal }: StreamCallbacks,
+  { onMeta, onDelta, onDone, onError, signal, conversationId }: StreamCallbacks,
 ): Promise<void> {
   const url = `${env.apiUrl}/api/v1/chat/stream`;
-  const body = JSON.stringify({ messages });
+  const body = JSON.stringify(
+    conversationId ? { messages, conversation_id: conversationId } : { messages },
+  );
 
   const doFetch = (token: string | null): Promise<Response> =>
     fetch(url, {
@@ -94,7 +98,8 @@ export async function streamChat(
         buffer = buffer.slice(sep + 2);
         const event = parseSseFrame(raw);
         if (!event) continue;
-        if (event.type === "delta") onDelta(event.content);
+        if (event.type === "meta") onMeta?.(event.conversation_id);
+        else if (event.type === "delta") onDelta(event.content);
         else if (event.type === "done") {
           onDone({ model: event.model, usage: event.usage, finish_reason: event.finish_reason });
           return;

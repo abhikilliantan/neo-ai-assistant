@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { listConversations } from "@/services/conversations";
 import { fetchHealth } from "@/services/system";
 
 export function DashboardView() {
@@ -9,6 +10,11 @@ export function DashboardView() {
     queryKey: ["system", "health"],
     queryFn: fetchHealth,
     refetchInterval: 30_000,
+  });
+
+  const convs = useQuery({
+    queryKey: ["conversations"],
+    queryFn: listConversations,
   });
 
   return (
@@ -33,7 +39,9 @@ export function DashboardView() {
           <CardTitle>Conversations</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-2xl font-semibold">—</p>
+          <p className="text-2xl font-semibold">
+            {convs.isLoading || convs.isError ? "—" : (convs.data?.length ?? 0)}
+          </p>
         </CardContent>
       </Card>
       <Card>

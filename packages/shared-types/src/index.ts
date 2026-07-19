@@ -80,6 +80,7 @@ export type ChatResponse = {
 // SSE frames from POST /api/v1/chat/stream. Backend emits delta/done via the
 // provider; error frames come from the endpoint when a provider raises after
 // headers were sent. Discriminate on `type`.
+export type ChatStreamMeta = { type: "meta"; conversation_id: string };
 export type ChatStreamDelta = { type: "delta"; content: string };
 export type ChatStreamDone = {
   type: "done";
@@ -88,4 +89,24 @@ export type ChatStreamDone = {
   finish_reason: string;
 };
 export type ChatStreamError = { type: "error"; code: string; message: string };
-export type ChatStreamEvent = ChatStreamDelta | ChatStreamDone | ChatStreamError;
+export type ChatStreamEvent = ChatStreamMeta | ChatStreamDelta | ChatStreamDone | ChatStreamError;
+
+// --- conversation persistence (mirrors backend /api/v1/conversations) ---
+export type ConversationSummary = {
+  id: string;
+  title: string | null;
+  last_message_at: string | null;
+  created_at: string;
+};
+
+export type ConversationMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  model: string | null;
+  created_at: string;
+};
+
+export type ConversationDetail = ConversationSummary & {
+  messages: ConversationMessage[];
+};
