@@ -18,26 +18,27 @@ repos:
         args: ["--maxkb=500"]
       - id: detect-private-key
 
-  # --- python (apps/api) — local hooks call the api venv binaries ---
+  # --- python (apps/api) — invoke via `uv run --package neo-api` so hooks
+  # always use the synced uv workspace env, same as CI. Requires `uv` on PATH.
   - repo: local
     hooks:
       - id: ruff-lint
         name: ruff check --fix (apps/api)
-        entry: apps/api/.venv/bin/ruff check --fix --force-exclude
+        entry: uv run --package neo-api ruff check --fix --force-exclude
         language: system
         files: ^apps/api/.*\.py$
         require_serial: true
 
       - id: ruff-format
         name: ruff format (apps/api)
-        entry: apps/api/.venv/bin/ruff format --force-exclude
+        entry: uv run --package neo-api ruff format --force-exclude
         language: system
         files: ^apps/api/.*\.py$
         require_serial: true
 
       - id: mypy
         name: mypy (apps/api)
-        entry: bash -c 'cd apps/api && .venv/bin/mypy app'
+        entry: bash -c 'cd apps/api && uv run --package neo-api mypy app'
         language: system
         types: [python]
         files: ^apps/api/.*\.py$
