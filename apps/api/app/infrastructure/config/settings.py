@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     embedding_model: str = "voyage-3.5"
     embedding_dimensions: int = 1024
 
+    # --- memory extraction (phase 5c) ---
+    # `llm` reuses the chat provider — no new API key. `mock` is the CI/test
+    # default and makes write-path tests deterministic.
+    memory_extractor: Literal["mock", "llm"] = "mock"
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]

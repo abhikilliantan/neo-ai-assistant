@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.ai.extractors import build_memory_extractor
 from app.ai.providers import build_chat_provider
 from app.ai.providers.embeddings import build_embedding_provider
 from app.application.ports.health import HealthCheck
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis = build_redis(settings)
     chat_provider = build_chat_provider(settings)  # fail-fast if misconfigured
     embedding_provider = build_embedding_provider(settings)  # fail-fast if misconfigured
+    memory_extractor = build_memory_extractor(settings, chat_provider)
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
@@ -48,6 +50,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = redis
     app.state.chat_provider = chat_provider
     app.state.embedding_provider = embedding_provider
+    app.state.memory_extractor = memory_extractor
     app.state.health_checks = checks
     log.info(
         "startup",
@@ -55,6 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         env=settings.python_env,
         ai_provider=settings.ai_provider,
         embedding_provider=settings.embedding_provider,
+        memory_extractor=settings.memory_extractor,
     )
 
     try:

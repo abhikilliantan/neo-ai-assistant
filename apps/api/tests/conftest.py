@@ -234,6 +234,7 @@ async def db_app(
     db_engine: AsyncEngine,
     app_engine: AsyncEngine,
 ) -> AsyncIterator[FastAPI]:
+    from app.ai.extractors.mock import MockMemoryExtractor
     from app.ai.providers.embeddings.mock import MockEmbeddingProvider
     from app.ai.providers.mock import MockProvider
 
@@ -245,6 +246,7 @@ async def db_app(
         jwt_secret_key="test-secret-key-at-least-32-bytes-long-xxxxx",
         ai_provider="mock",
         embedding_provider="mock",
+        memory_extractor="mock",
     )
     app = create_app(settings)
     system_sm = async_sessionmaker(db_engine, expire_on_commit=False)
@@ -256,9 +258,11 @@ async def db_app(
     # Pin providers explicitly — lifespan is skipped in tests, and this
     # keeps endpoint tests deterministic regardless of env leakage. The
     # embedding provider MUST be the mock; a real Voyage key on the host env
-    # must never trigger live API calls during tests.
+    # must never trigger live API calls during tests. Same for the memory
+    # extractor: `llm` would fan out to the chat provider.
     app.state.chat_provider = MockProvider()
     app.state.embedding_provider = MockEmbeddingProvider()
+    app.state.memory_extractor = MockMemoryExtractor()
     yield app
 
 

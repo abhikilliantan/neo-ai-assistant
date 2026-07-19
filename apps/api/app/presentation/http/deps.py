@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
+from app.application.ports.memory_extraction import MemoryExtractor
 from app.infrastructure.db import Database
 from app.infrastructure.db.models import User
 from app.infrastructure.db.repositories import UserRepository
@@ -59,6 +60,14 @@ def get_embedding_provider(request: Request) -> EmbeddingProvider:
     return request.app.state.embedding_provider  # type: ignore[no-any-return]
 
 
+def get_memory_extractor(request: Request) -> MemoryExtractor:
+    """Built once in the lifespan; consumed by /chat + /chat/stream for the
+    best-effort memory write path (5c). Never fails the request when it
+    misbehaves — see chat.py::_extract_and_store_memories.
+    """
+    return request.app.state.memory_extractor  # type: ignore[no-any-return]
+
+
 def get_health_checks(request: Request) -> list[HealthCheck]:
     return request.app.state.health_checks  # type: ignore[no-any-return]
 
@@ -87,6 +96,7 @@ SessionDep = AppSessionDep
 RedisDep = Annotated[Redis, Depends(get_redis)]
 HealthChecksDep = Annotated[list[HealthCheck], Depends(get_health_checks)]
 EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
+MemoryExtractorDep = Annotated[MemoryExtractor, Depends(get_memory_extractor)]
 
 
 def get_access_payload(

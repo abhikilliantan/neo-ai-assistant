@@ -25,14 +25,25 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
 from app.application.ports.chat import ChatMessage, ChatProvider
+from app.application.ports.embeddings import EmbeddingProvider
+from app.application.ports.memory_extraction import MemoryExtractor
 from app.infrastructure.db import Database
-from app.infrastructure.db.repositories import ConversationRepository, MessageRepository
+from app.infrastructure.db.repositories import (
+    ConversationRepository,
+    MemoryRepository,
+    MessageRepository,
+)
+from app.infrastructure.logging import get_logger
 from app.presentation.http.deps import (
     CurrentTenantDep,
     CurrentUserDep,
+    EmbeddingProviderDep,
+    MemoryExtractorDep,
     StreamingCurrentUserDep,
     TenantSessionDep,
     get_app_database,
+    get_embedding_provider,
+    get_memory_extractor,
 )
 from app.presentation.http.schemas.chat import ChatRequest, ChatResponse
 from app.shared.exceptions.ai import (
@@ -73,6 +84,62 @@ def _usage_tokens(usage: object) -> tuple[int | None, int | None]:
     )
 
 
+async def _extract_and_store_memories(
+    db: Database,
+    embedding_provider: EmbeddingProvider,
+    extractor: MemoryExtractor,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    messages: list[ChatMessage],
+    assistant_reply: str,
+) -> None:
+    """Best-effort: extract durable facts from a completed chat turn, embed
+    them, and persist as memories. ANY failure (extractor/embed/DB) is
+    swallowed with a log line — a memory failure MUST NOT break chat.
+
+    Uses input_type="document" for the embedding call. Retrieval (5d) will
+    embed the query with input_type="query".
+
+    ENG-BACKLOG: on the non-streaming path this adds extractor+embedding
+    latency to the response. Move to a background task once we have one.
+    """
+    log = get_logger("memory.write")
+    try:
+        facts = await extractor.extract(messages=messages, assistant_reply=assistant_reply)
+        if not facts:
+            return
+        result = await embedding_provider.embed(
+            texts=[f.content for f in facts],
+            input_type="document",
+        )
+        async with db.sessionmaker() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.current_tenant', :t, true)").bindparams(
+                    t=str(tenant_id)
+                )
+            )
+            repo = MemoryRepository(session)
+            for fact, vector in zip(facts, result.vectors, strict=True):
+                await repo.add(
+                    organization_id=tenant_id,
+                    user_id=user_id,
+                    content=fact.content,
+                    embedding=vector,
+                    embedding_model=result.model,
+                    kind=fact.kind,
+                    source="chat",
+                )
+        log.info("memory.write.success", count=len(facts), user_id=str(user_id))
+    except Exception as e:
+        log.warning(
+            "memory.write.failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            user_id=str(user_id),
+        )
+
+
 # --- non-streaming ----------------------------------------------------------
 
 
@@ -83,6 +150,9 @@ async def chat(
     tenant_id: CurrentTenantDep,
     session: TenantSessionDep,  # engages SET LOCAL app.current_tenant
     provider: ProviderDep,
+    embedding_provider: EmbeddingProviderDep,
+    memory_extractor: MemoryExtractorDep,
+    db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
@@ -122,6 +192,19 @@ async def chat(
         finish_reason=completion.finish_reason,
     )
     await conv_repo.touch(conv.id)
+
+    # Best-effort memory write. Opens its OWN short tenant session, never
+    # raises, adds extraction+embedding latency to the response (backlog:
+    # move behind a background task).
+    await _extract_and_store_memories(
+        db,
+        embedding_provider,
+        memory_extractor,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        messages=body.messages,
+        assistant_reply=completion.content,
+    )
 
     return ChatResponse(
         conversation_id=conv.id,
@@ -222,6 +305,8 @@ async def chat_stream(
     tenant_id: CurrentTenantDep,  # from token; no DB call
     provider: ProviderDep,
     db: Annotated[Database, Depends(get_app_database)],
+    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
+    memory_extractor: Annotated[MemoryExtractor, Depends(get_memory_extractor)],
 ) -> StreamingResponse:
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
@@ -272,14 +357,30 @@ async def chat_stream(
 
         # --- Txn B: AFTER the stream ---------------------------------------
         # Fresh short session, GUC set again, persist assistant + touch.
+        assistant_content = "".join(accumulated)
         await _persist_assistant_and_touch(
             db,
             tenant_id=tenant_id,
             conversation_id=conv_id,
-            content="".join(accumulated),
+            content=assistant_content,
             model=done_model,
             usage=done_usage,
             finish_reason=done_finish_reason,
+        )
+
+        # --- Txn C: memory write (best-effort) -----------------------------
+        # Happens AFTER the done frame was yielded, so it never delays the
+        # visible answer. If the client already disconnected, generator
+        # cancellation skips this — assistant + conversation are already
+        # persisted by Txn B, so no data is lost.
+        await _extract_and_store_memories(
+            db,
+            embedding_provider,
+            memory_extractor,
+            tenant_id=tenant_id,
+            user_id=user.id,
+            messages=body.messages,
+            assistant_reply=assistant_content,
         )
 
     return StreamingResponse(
