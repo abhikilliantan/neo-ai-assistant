@@ -1,0 +1,9 @@
+# Root uv workspace. Not a shippable package — coordinates member projects.
+[project]
+name = "neo-workspace"
+version = "0.0.0"
+description = "Neo AI Assistant monorepo — uv workspace root"
+requires-python = ">=3.12,<3.13"
+
+[tool.uv.workspace]
+members = ["apps/api", "packages/py-shared"]

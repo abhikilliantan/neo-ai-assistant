@@ -1,0 +1,21 @@
+# Dependencies + build artifacts
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+.venv
+**/.venv
+
+# Lockfiles
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Generated
+apps/web/next-env.d.ts
+
+# Python — owned by ruff
+apps/api/**
+packages/py-shared/**

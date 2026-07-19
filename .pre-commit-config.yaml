@@ -1,0 +1,62 @@
+minimum_pre_commit_version: "3.8.0"
+default_language_version:
+  python: python3.12
+
+repos:
+  # --- generic hygiene ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ["--unsafe"] # allow compose custom tags like !reset
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: detect-private-key
+
+  # --- python (apps/api) — local hooks call the api venv binaries ---
+  - repo: local
+    hooks:
+      - id: ruff-lint
+        name: ruff check --fix (apps/api)
+        entry: apps/api/.venv/bin/ruff check --fix --force-exclude
+        language: system
+        files: ^apps/api/.*\.py$
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format (apps/api)
+        entry: apps/api/.venv/bin/ruff format --force-exclude
+        language: system
+        files: ^apps/api/.*\.py$
+        require_serial: true
+
+      - id: mypy
+        name: mypy (apps/api)
+        entry: bash -c 'cd apps/api && .venv/bin/mypy app'
+        language: system
+        types: [python]
+        files: ^apps/api/.*\.py$
+        pass_filenames: false
+        require_serial: true
+
+  # --- frontend (apps/web + packages) — local hooks call pnpm ---
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier --write
+        entry: pnpm exec prettier --write --ignore-unknown
+        language: system
+        files: \.(ts|tsx|js|jsx|json|md|yml|yaml|css)$
+        exclude: ^(apps/api/|.*/(node_modules|\.next|dist|\.venv)/|pnpm-lock\.yaml$)
+
+      - id: eslint-web
+        name: eslint (apps/web)
+        entry: pnpm --filter web lint
+        language: system
+        files: ^apps/web/.*\.(ts|tsx)$
+        pass_filenames: false

@@ -1,0 +1,26 @@
+# Dev overlay — auto-loaded by `docker compose up`.
+# Adds bind-mounts + hot-reload to api and web.
+
+services:
+  api:
+    volumes:
+      - ./apps/api:/app
+      - /app/.venv # anon vol preserves image's venv from bind-mount overlay
+    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+  web:
+    build: !reset null
+    image: node:20-alpine
+    working_dir: /repo
+    volumes:
+      - ./:/repo
+      - /repo/node_modules # anon vols shield resolved installs from host bind
+      - /repo/apps/web/node_modules
+      - /repo/packages/shared-types/node_modules
+    command: sh -c "corepack enable && pnpm install && pnpm --filter web dev"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME}
+    ports:
+      - "3001:3000"
+    networks: [neo]
