@@ -1,6 +1,7 @@
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 import { env } from "@/lib/env";
-import { getStoredRefreshToken, useSessionStore } from "@/store/session";
+import { clearAndRedirect, refreshOnce } from "@/services/session-refresh";
+import { useSessionStore } from "@/store/session";
 
 export const http: AxiosInstance = axios.create({
   baseURL: env.apiUrl,
@@ -16,40 +17,6 @@ http.interceptors.request.use((config) => {
   }
   return config;
 });
-
-// Single-flight refresh so N concurrent 401s share one refresh call.
-let refreshPromise: Promise<string | null> | null = null;
-
-async function refreshOnce(): Promise<string | null> {
-  if (refreshPromise) return refreshPromise;
-  refreshPromise = (async () => {
-    const stored = getStoredRefreshToken();
-    if (!stored) return null;
-    try {
-      const { refresh } = await import("@/services/auth");
-      const r = await refresh(stored);
-      useSessionStore.getState().setSession({
-        user: { id: r.user_id, email: r.email },
-        accessToken: r.access_token,
-        refreshToken: r.refresh_token,
-        tenantId: r.active_tenant_id,
-      });
-      return r.access_token;
-    } catch {
-      return null;
-    } finally {
-      refreshPromise = null;
-    }
-  })();
-  return refreshPromise;
-}
-
-function clearAndRedirect(): void {
-  useSessionStore.getState().clearSession();
-  if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-    window.location.assign("/login");
-  }
-}
 
 type RetriableConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 

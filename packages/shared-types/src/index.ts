@@ -76,3 +76,16 @@ export type ChatResponse = {
   model: string;
   usage: ChatUsage | null;
 };
+
+// SSE frames from POST /api/v1/chat/stream. Backend emits delta/done via the
+// provider; error frames come from the endpoint when a provider raises after
+// headers were sent. Discriminate on `type`.
+export type ChatStreamDelta = { type: "delta"; content: string };
+export type ChatStreamDone = {
+  type: "done";
+  model: string;
+  usage: ChatUsage | null;
+  finish_reason: string;
+};
+export type ChatStreamError = { type: "error"; code: string; message: string };
+export type ChatStreamEvent = ChatStreamDelta | ChatStreamDone | ChatStreamError;
