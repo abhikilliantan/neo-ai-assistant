@@ -110,3 +110,18 @@ export type ConversationMessage = {
 export type ConversationDetail = ConversationSummary & {
   messages: ConversationMessage[];
 };
+
+// --- memory & preferences (mirrors backend /api/v1/memories + /preferences) ---
+export type Memory = {
+  id: string;
+  content: string;
+  kind: string;
+  source: string | null;
+  created_at: string;
+};
+
+// Backend column is JSONB — value is any valid JSON, so `unknown` at the boundary.
+export type Preference = {
+  key: string;
+  value: unknown;
+};
