@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.tools import ToolRegistry
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
 from app.application.ports.memory_extraction import MemoryExtractor
@@ -69,6 +70,13 @@ def get_memory_extractor(request: Request) -> MemoryExtractor:
     return request.app.state.memory_extractor  # type: ignore[no-any-return]
 
 
+def get_tool_registry(request: Request) -> ToolRegistry:
+    """Built once in the lifespan. NO route consumes this yet — 6b wires it
+    into the chat path. Present here so 6b is a pure route-level change.
+    """
+    return request.app.state.tool_registry  # type: ignore[no-any-return]
+
+
 def get_app_settings(request: Request) -> Settings:
     """Read the Settings instance built in create_app / lifespan.
 
@@ -107,6 +115,7 @@ RedisDep = Annotated[Redis, Depends(get_redis)]
 HealthChecksDep = Annotated[list[HealthCheck], Depends(get_health_checks)]
 EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
 MemoryExtractorDep = Annotated[MemoryExtractor, Depends(get_memory_extractor)]
+ToolRegistryDep = Annotated[ToolRegistry, Depends(get_tool_registry)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 

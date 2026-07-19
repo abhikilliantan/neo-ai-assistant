@@ -237,6 +237,7 @@ async def db_app(
     from app.ai.extractors.mock import MockMemoryExtractor
     from app.ai.providers.embeddings.mock import MockEmbeddingProvider
     from app.ai.providers.mock import MockProvider
+    from app.ai.tools import build_tool_registry
 
     settings = Settings(
         python_env="test",
@@ -263,6 +264,7 @@ async def db_app(
     app.state.chat_provider = MockProvider()
     app.state.embedding_provider = MockEmbeddingProvider()
     app.state.memory_extractor = MockMemoryExtractor()
+    app.state.tool_registry = build_tool_registry(settings)
     yield app
 
 
