@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     api_secret_key: str = "change-me"  # noqa: S105 (scaffold default; override via env)
     api_cors_origins: str = "http://localhost:3000"
 
+    # --- auth / jwt ---
+    jwt_secret_key: str = "change-me"  # noqa: S105 (scaffold default; override via env)
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 30
+
     # --- database ---
     database_url: str = Field(
         default="postgresql+asyncpg://neo:neo@localhost:5432/neo",
