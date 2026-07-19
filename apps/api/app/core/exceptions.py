@@ -6,6 +6,12 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.shared.exceptions.ai import (
+    ProviderAPIError,
+    ProviderAuthError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
+)
 from app.shared.exceptions.auth import AuthenticationError, EmailAlreadyRegisteredError
 
 
@@ -44,7 +50,39 @@ async def _validation_handler(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _provider_auth_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("provider_auth_error", "upstream AI provider rejected our credentials"),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+    )
+
+
+async def _provider_rate_limit_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("provider_rate_limited", "upstream AI provider rate-limited the request"),
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
+
+
+async def _provider_unavailable_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("provider_unavailable", "upstream AI provider is unreachable"),
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+    )
+
+
+async def _provider_api_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("provider_error", "upstream AI provider returned an error"),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_handler)
     app.add_exception_handler(EmailAlreadyRegisteredError, _email_taken_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
+    app.add_exception_handler(ProviderAuthError, _provider_auth_handler)
+    app.add_exception_handler(ProviderRateLimitError, _provider_rate_limit_handler)
+    app.add_exception_handler(ProviderUnavailableError, _provider_unavailable_handler)
+    app.add_exception_handler(ProviderAPIError, _provider_api_handler)

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.ai.providers import build_chat_provider
 from app.application.ports.health import HealthCheck
 from app.core.exceptions import register_exception_handlers
 from app.core.middleware import RequestContextMiddleware
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     database = build_database(settings)  # neo_app (RLS-enforced)
     system_database = build_system_database(settings)  # neo (privileged)
     redis = build_redis(settings)
+    chat_provider = build_chat_provider(settings)  # fail-fast if misconfigured
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
@@ -37,13 +39,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.database = database
     app.state.system_database = system_database
     app.state.redis = redis
+    app.state.chat_provider = chat_provider
     app.state.health_checks = checks
-    log.info("startup", version=__version__, env=settings.python_env)
+    log.info(
+        "startup",
+        version=__version__,
+        env=settings.python_env,
+        ai_provider=settings.ai_provider,
+    )
 
     try:
         yield
     finally:
         log.info("shutdown")
+        if hasattr(chat_provider, "close"):
+            await chat_provider.close()
         await redis.aclose()
         await database.dispose()
         await system_database.dispose()

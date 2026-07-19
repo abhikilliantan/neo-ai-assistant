@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
-from app.ai.providers.mock import MockProvider
 from app.application.ports.chat import ChatMessage, ChatProvider
 from app.presentation.http.deps import CurrentUserDep, TenantSessionDep
 from app.presentation.http.schemas.chat import ChatRequest, ChatResponse
@@ -19,9 +18,13 @@ from app.presentation.http.schemas.chat import ChatRequest, ChatResponse
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
-def get_chat_provider() -> ChatProvider:
-    # Phase 3 swaps this to a real provider (OpenAI/Anthropic/etc.).
-    return MockProvider()
+def get_chat_provider(request: Request) -> ChatProvider:
+    """Read the chat provider built once in the lifespan.
+
+    build_chat_provider(settings) picks mock vs anthropic per AI_PROVIDER;
+    test fixtures override app.state.chat_provider directly to pin `mock`.
+    """
+    return request.app.state.chat_provider  # type: ignore[no-any-return]
 
 
 ProviderDep = Annotated[ChatProvider, Depends(get_chat_provider)]

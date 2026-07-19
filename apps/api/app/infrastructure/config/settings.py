@@ -57,8 +57,13 @@ class Settings(BaseSettings):
     # --- redis ---
     redis_url: str = "redis://localhost:6379/0"
 
-    # --- llm providers (kept optional at scaffold stage) ---
-    anthropic_api_key: str | None = None
+    # --- ai / llm providers ---
+    ai_provider: Literal["mock", "anthropic"] = "mock"
+    ai_max_tokens: int = 1024
+
+    anthropic_api_key: str = ""  # empty default; real value goes in .env
+    anthropic_model: str = "claude-sonnet-5"
+
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
 
