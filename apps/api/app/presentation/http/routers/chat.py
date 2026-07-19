@@ -39,6 +39,7 @@ from app.presentation.http.deps import (
     CurrentUserDep,
     EmbeddingProviderDep,
     MemoryExtractorDep,
+    SettingsDep,
     StreamingCurrentUserDep,
     TenantSessionDep,
     get_app_database,
@@ -82,6 +83,79 @@ def _usage_tokens(usage: object) -> tuple[int | None, int | None]:
         getattr(usage, "prompt_tokens", None),
         getattr(usage, "completion_tokens", None),
     )
+
+
+_MEMORY_CONTEXT_PREAMBLE = (
+    "Things you remember about this user (use where relevant, don't mention unless helpful):"
+)
+
+
+async def _retrieve_memory_context(
+    db: Database,
+    embedding_provider: EmbeddingProvider,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    query_text: str,
+    top_k: int,
+    min_similarity: float,
+) -> str | None:
+    """Best-effort semantic retrieval of this user's prior memories.
+
+    Returns a formatted system-message string, or None if nothing above the
+    similarity floor. ANY failure (embed/DB) is swallowed with a log line
+    and returns None — a retrieval failure MUST NOT break chat.
+
+    Uses input_type="query" for the embedding call (locked; retrieval side
+    of the write path's "document"). Search is org+user scoped by the repo
+    AND filtered again by RLS at the DB layer.
+    """
+    log = get_logger("memory.retrieval")
+    try:
+        result = await embedding_provider.embed(texts=[query_text], input_type="query")
+        query_vec = result.vectors[0]
+        async with db.sessionmaker() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.current_tenant', :t, true)").bindparams(
+                    t=str(tenant_id)
+                )
+            )
+            hits = await MemoryRepository(session).search_similar(
+                organization_id=tenant_id,
+                user_id=user_id,
+                query_embedding=query_vec,
+                limit=top_k,
+            )
+        kept = [(m, sim) for m, sim in hits if sim >= min_similarity]
+        log.info(
+            "memory.retrieval",
+            candidates=len(hits),
+            injected=len(kept),
+            user_id=str(user_id),
+        )
+        if not kept:
+            return None
+        lines = [f"- {m.content}" for m, _sim in kept]
+        return _MEMORY_CONTEXT_PREAMBLE + "\n" + "\n".join(lines)
+    except Exception as e:
+        log.warning(
+            "memory.retrieval.failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            user_id=str(user_id),
+        )
+        return None
+
+
+def _augment_messages(base: list[ChatMessage], memory_context: str | None) -> list[ChatMessage]:
+    """Prepend a system message carrying `memory_context` (or return `base`).
+
+    Returns a NEW list — never mutates `base`, so downstream code that reads
+    `body.messages` (persistence, 5c memory write) is untouched.
+    """
+    if memory_context is None:
+        return base
+    return [ChatMessage(role="system", content=memory_context), *base]
 
 
 async def _extract_and_store_memories(
@@ -152,6 +226,7 @@ async def chat(
     provider: ProviderDep,
     embedding_provider: EmbeddingProviderDep,
     memory_extractor: MemoryExtractorDep,
+    settings: SettingsDep,
     db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
     if tenant_id is None:
@@ -178,7 +253,23 @@ async def chat(
         content=body.messages[-1].content,
     )
 
-    completion = await provider.complete(messages=body.messages)
+    # Retrieve prior memories BEFORE the provider call. The 5c write for THIS
+    # turn runs AFTER the provider (below), so the just-being-extracted fact
+    # cannot leak into this turn's context.
+    memory_context: str | None = None
+    if settings.memory_retrieval_enabled:
+        memory_context = await _retrieve_memory_context(
+            db,
+            embedding_provider,
+            tenant_id=tenant_id,
+            user_id=user.id,
+            query_text=body.messages[-1].content,
+            top_k=settings.memory_retrieval_top_k,
+            min_similarity=settings.memory_retrieval_min_similarity,
+        )
+    augmented = _augment_messages(body.messages, memory_context)
+
+    completion = await provider.complete(messages=augmented)
 
     prompt_tokens, completion_tokens = _usage_tokens(completion.usage)
     await msg_repo.add(
@@ -307,6 +398,7 @@ async def chat_stream(
     db: Annotated[Database, Depends(get_app_database)],
     embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
     memory_extractor: Annotated[MemoryExtractor, Depends(get_memory_extractor)],
+    settings: SettingsDep,
 ) -> StreamingResponse:
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
@@ -324,6 +416,21 @@ async def chat_stream(
         user_message=body.messages[-1].content,
     )
 
+    # Memory retrieval — its OWN short session, closed BEFORE we return
+    # StreamingResponse. Never held across the LLM stream.
+    memory_context: str | None = None
+    if settings.memory_retrieval_enabled:
+        memory_context = await _retrieve_memory_context(
+            db,
+            embedding_provider,
+            tenant_id=tenant_id,
+            user_id=user.id,
+            query_text=body.messages[-1].content,
+            top_k=settings.memory_retrieval_top_k,
+            min_similarity=settings.memory_retrieval_min_similarity,
+        )
+    augmented = _augment_messages(body.messages, memory_context)
+
     async def _generator() -> AsyncIterator[bytes]:
         # Leading endpoint meta frame — raw dict via json.dumps (same shape
         # as the terminal error frame). NOT a provider ChatStreamEvent so the
@@ -336,7 +443,7 @@ async def chat_stream(
         done_finish_reason: str | None = None
 
         try:
-            async for event in provider.stream(messages=body.messages):
+            async for event in provider.stream(messages=augmented):
                 yield f"data: {event.model_dump_json()}\n\n".encode()
                 if event.type == "delta":
                     accumulated.append(event.content)

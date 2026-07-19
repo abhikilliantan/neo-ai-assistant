@@ -245,9 +245,12 @@ async def test_write_path_uses_input_type_document(
         )
         assert r.status_code == 200
 
-    assert len(spy.calls) == 1
-    assert spy.calls[0]["input_type"] == "document"
-    assert spy.calls[0]["texts"] == ["user_fact: user prefers dark mode"]
+    # With 5d, the same turn also embeds the user's message with
+    # input_type="query" for memory retrieval. Assert the write invariant
+    # (exactly one document-typed call with the extracted fact) is preserved.
+    document_calls = [c for c in spy.calls if c["input_type"] == "document"]
+    assert len(document_calls) == 1
+    assert document_calls[0]["texts"] == ["user_fact: user prefers dark mode"]
 
 
 # --- tenant isolation of the write path -------------------------------------

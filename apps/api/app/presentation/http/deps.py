@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
 from app.application.ports.memory_extraction import MemoryExtractor
+from app.infrastructure.config import Settings
 from app.infrastructure.db import Database
 from app.infrastructure.db.models import User
 from app.infrastructure.db.repositories import UserRepository
@@ -68,6 +69,15 @@ def get_memory_extractor(request: Request) -> MemoryExtractor:
     return request.app.state.memory_extractor  # type: ignore[no-any-return]
 
 
+def get_app_settings(request: Request) -> Settings:
+    """Read the Settings instance built in create_app / lifespan.
+
+    Named `get_app_settings` (not `get_settings`) to avoid colliding with the
+    module-level cached factory in infrastructure.config.
+    """
+    return request.app.state.settings  # type: ignore[no-any-return]
+
+
 def get_health_checks(request: Request) -> list[HealthCheck]:
     return request.app.state.health_checks  # type: ignore[no-any-return]
 
@@ -97,6 +107,7 @@ RedisDep = Annotated[Redis, Depends(get_redis)]
 HealthChecksDep = Annotated[list[HealthCheck], Depends(get_health_checks)]
 EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
 MemoryExtractorDep = Annotated[MemoryExtractor, Depends(get_memory_extractor)]
+SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 
 def get_access_payload(

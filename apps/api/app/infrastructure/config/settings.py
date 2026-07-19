@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     # default and makes write-path tests deterministic.
     memory_extractor: Literal["mock", "llm"] = "mock"
 
+    # --- memory retrieval (phase 5d) ---
+    # Threshold-gated top-K nearest neighbours on the caller's own memories,
+    # injected as a system message before the provider call. Ephemeral —
+    # never persisted. Disable to make the chat path a strict no-op.
+    memory_retrieval_enabled: bool = True
+    memory_retrieval_top_k: int = 5
+    memory_retrieval_min_similarity: float = 0.7
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
