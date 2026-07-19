@@ -95,6 +95,22 @@ def decode_token(token: str) -> TokenPayload:
         raise InvalidTokenError(f"invalid token claims: {e}") from e
 
 
+def decode_access_token(token: str) -> TokenPayload:
+    """Decode + require `type == "access"`. Raises InvalidTokenError on mismatch."""
+    payload = decode_token(token)
+    if payload.type != "access":
+        raise InvalidTokenError(f"expected access token, got {payload.type!r}")
+    return payload
+
+
+def decode_refresh_token(token: str) -> TokenPayload:
+    """Decode + require `type == "refresh"`. Raises InvalidTokenError on mismatch."""
+    payload = decode_token(token)
+    if payload.type != "refresh":
+        raise InvalidTokenError(f"expected refresh token, got {payload.type!r}")
+    return payload
+
+
 def hash_refresh_token(token: str) -> str:
     """SHA-256 hex — deterministic lookup key for sessions.refresh_token_hash."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

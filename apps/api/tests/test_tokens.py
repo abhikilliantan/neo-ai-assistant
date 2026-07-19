@@ -63,7 +63,9 @@ def test_expired_token_raises() -> None:
 
 def test_tampered_token_raises() -> None:
     token = create_access_token(subject=uuid4())
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Corrupt the signature segment (last-char flip can be a base64 no-op).
+    h, p, sig = token.rsplit(".", 2)
+    tampered = f"{h}.{p}.{'A' * len(sig)}"
     with pytest.raises(InvalidTokenError):
         decode_token(tampered)
 

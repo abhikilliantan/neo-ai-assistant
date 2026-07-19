@@ -8,6 +8,8 @@ from app.infrastructure.security.tokens import (
     TokenPayload,
     create_access_token,
     create_refresh_token,
+    decode_access_token,
+    decode_refresh_token,
     decode_token,
     hash_refresh_token,
 )
@@ -18,6 +20,8 @@ __all__ = [
     "TokenPayload",
     "create_access_token",
     "create_refresh_token",
+    "decode_access_token",
+    "decode_refresh_token",
     "decode_token",
     "hash_password",
     "hash_refresh_token",

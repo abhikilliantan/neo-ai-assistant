@@ -10,13 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.application.ports.health import HealthCheck
+from app.core.exceptions import register_exception_handlers
 from app.core.middleware import RequestContextMiddleware
 from app.infrastructure.cache import build_redis
 from app.infrastructure.config import Settings, get_settings
 from app.infrastructure.db import build_database
 from app.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
 from app.infrastructure.logging import configure_logging, get_logger
-from app.presentation.http.routers import system_router
+from app.presentation.http.routers import auth_router, system_router
 
 
 @asynccontextmanager
@@ -64,7 +65,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    register_exception_handlers(app)
     app.include_router(system_router)
+    app.include_router(auth_router)
     return app
 
 
