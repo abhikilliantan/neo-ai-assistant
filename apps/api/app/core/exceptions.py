@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.shared.exceptions.auth import AuthenticationError, EmailAlreadyRegisteredError
@@ -27,6 +28,23 @@ async def _email_taken_handler(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _validation_handler(_: Request, exc: Exception) -> JSONResponse:
+    # First error typically pinpoints what's wrong; keep the message short.
+    message = "invalid request"
+    if isinstance(exc, RequestValidationError):
+        errors = exc.errors()
+        if errors:
+            first = errors[0]
+            loc = ".".join(str(p) for p in first.get("loc", ()) if p != "body")
+            reason = first.get("msg", "invalid")
+            message = f"{loc}: {reason}" if loc else reason
+    return JSONResponse(
+        _error_body("validation_error", message),
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_handler)
     app.add_exception_handler(EmailAlreadyRegisteredError, _email_taken_handler)
+    app.add_exception_handler(RequestValidationError, _validation_handler)

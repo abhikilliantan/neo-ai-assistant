@@ -53,3 +53,26 @@ export type LoginRequest = {
 export type RefreshRequest = {
   refresh_token: string;
 };
+
+// --- chat (mirrors backend app/application/ports/chat.py) ---
+export type ChatRole = "system" | "user" | "assistant";
+
+export type ChatMessage = {
+  role: ChatRole;
+  content: string;
+};
+
+export type ChatUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+};
+
+export type ChatRequest = {
+  messages: ChatMessage[];
+};
+
+export type ChatResponse = {
+  message: ChatMessage;
+  model: string;
+  usage: ChatUsage | null;
+};

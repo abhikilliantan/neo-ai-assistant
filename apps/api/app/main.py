@@ -18,7 +18,7 @@ from app.infrastructure.config import Settings, get_settings
 from app.infrastructure.db import build_database, build_system_database
 from app.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
 from app.infrastructure.logging import configure_logging, get_logger
-from app.presentation.http.routers import auth_router, system_router
+from app.presentation.http.routers import auth_router, chat_router, system_router
 
 
 @asynccontextmanager
@@ -84,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(system_router)
     app.include_router(auth_router)
+    app.include_router(chat_router)
     return app
 
 
