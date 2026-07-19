@@ -12,6 +12,11 @@ export type ApiError = {
   details?: Record<string, unknown>;
 };
 
+// Backend maps domain errors into this shape via core/exceptions.py.
+export type ApiErrorEnvelope = {
+  error: ApiError;
+};
+
 export type Pagination = {
   page: number;
   pageSize: number;
@@ -21,4 +26,30 @@ export type Pagination = {
 export type HealthStatus = {
   status: "ok" | "degraded";
   version: string;
+};
+
+// --- auth (mirrors backend AuthResponse) ---
+export type AuthResponse = {
+  user_id: string;
+  email: string;
+  active_tenant_id: string | null;
+  access_token: string;
+  refresh_token: string;
+  token_type: "bearer";
+  expires_in: number;
+};
+
+export type RegisterRequest = {
+  email: string;
+  password: string;
+  organization_name?: string;
+};
+
+export type LoginRequest = {
+  email: string;
+  password: string;
+};
+
+export type RefreshRequest = {
+  refresh_token: string;
 };
