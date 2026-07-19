@@ -111,6 +111,7 @@ class MemoryRepositoryPort(Protocol):
         query_embedding: list[float],
         limit: int = 5,
         kind: str | None = None,
+        embedding_model: str | None = None,
     ) -> list[tuple[Memory, float]]: ...
     async def list_for_user(
         self,

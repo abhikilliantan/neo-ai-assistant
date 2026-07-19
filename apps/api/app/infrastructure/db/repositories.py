@@ -209,6 +209,7 @@ class MemoryRepository:
         query_embedding: list[float],
         limit: int = 5,
         kind: str | None = None,
+        embedding_model: str | None = None,
     ) -> list[tuple[Memory, float]]:
         """Cosine-similarity ANN search, tenant + user scoped, soft-delete aware.
 
@@ -220,6 +221,12 @@ class MemoryRepository:
 
         Returned similarity = 1 - cosine_distance ∈ [-1, 1] (in [0, 1] for
         L2-normalized vectors, which both mock and Voyage produce).
+
+        `embedding_model` (6c) is an optional guard against mixing vector
+        spaces: pgvector's cosine distance across rows from different models
+        is numerically meaningless. When set, only rows tagged with this
+        exact model are considered. Callers that embed the query themselves
+        should pass the provider's reported model here.
         """
         distance = Memory.embedding.cosine_distance(query_embedding).label("distance")
         stmt = (
@@ -230,6 +237,8 @@ class MemoryRepository:
         )
         if kind is not None:
             stmt = stmt.where(Memory.kind == kind)
+        if embedding_model is not None:
+            stmt = stmt.where(Memory.embedding_model == embedding_model)
         stmt = stmt.order_by(distance.asc()).limit(limit)
         rows = (await self.session.execute(stmt)).all()
         return [(memory, 1.0 - float(dist)) for memory, dist in rows]

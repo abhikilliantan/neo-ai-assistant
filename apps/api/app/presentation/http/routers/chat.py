@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
+from app.ai.tools import build_request_tool_registry
 from app.application.ports.chat import ChatMessage, ChatProvider
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.memory_extraction import MemoryExtractor
@@ -42,7 +43,6 @@ from app.presentation.http.deps import (
     SettingsDep,
     StreamingCurrentUserDep,
     TenantSessionDep,
-    ToolRegistryDep,
     get_app_database,
     get_embedding_provider,
     get_memory_extractor,
@@ -227,7 +227,6 @@ async def chat(
     provider: ProviderDep,
     embedding_provider: EmbeddingProviderDep,
     memory_extractor: MemoryExtractorDep,
-    tool_registry: ToolRegistryDep,
     settings: SettingsDep,
     db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
@@ -271,17 +270,26 @@ async def chat(
         )
     augmented = _augment_messages(body.messages, memory_context)
 
-    # Tools: when enabled and the registry has any, hand the provider the
-    # specs + a bound executor. The tool-use loop then lives INSIDE the
-    # provider — the intermediate tool_use/tool_result turns are ephemeral
-    # and never surface to persistence (only completion.content does).
+    # Tools: build a PER-REQUEST registry so caller-bound tools (search_memory)
+    # get the current tenant session, embedding provider, and user_id. The
+    # app.state (startup) registry is stateless-baseline only and is NOT
+    # mutated per request. The tool-use loop lives INSIDE the provider —
+    # intermediate tool_use/tool_result turns are ephemeral and never surface
+    # to persistence (only completion.content does).
     tools = None
     tool_executor = None
     if settings.tools_enabled:
-        specs = tool_registry.specs()
+        request_registry = build_request_tool_registry(
+            settings=settings,
+            memory_repo=MemoryRepository(session),
+            embedding_provider=embedding_provider,
+            organization_id=tenant_id,
+            user_id=user.id,
+        )
+        specs = request_registry.specs()
         if specs:
             tools = specs
-            tool_executor = tool_registry.execute
+            tool_executor = request_registry.execute
 
     completion = await provider.complete(
         messages=augmented,

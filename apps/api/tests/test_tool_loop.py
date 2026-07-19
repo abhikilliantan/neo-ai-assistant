@@ -155,9 +155,12 @@ async def test_chat_runs_tool_via_registry_and_folds_result_into_final_text(
         assert msgs[1]["content"] == "final: ping"
 
     # And the endpoint handed the provider the registered specs (not None).
+    # 6c widened the request registry from {echo} to {echo, search_memory} —
+    # assert set membership rather than a strict list, so future additions
+    # don't churn this test.
     assert scripted.tools_seen
     assert scripted.tools_seen[-1] is not None
-    assert [s["name"] for s in scripted.tools_seen[-1]] == ["echo"]
+    assert "echo" in {s["name"] for s in scripted.tools_seen[-1]}
 
 
 # --- Tool error path: executor reports is_error=True; chat still 200 --------
@@ -294,7 +297,9 @@ async def test_tools_enabled_true_passes_registered_specs(
         assert r.status_code == 200
 
     assert spy.calls[-1]["tools"] is not None
-    assert [s["name"] for s in spy.calls[-1]["tools"]] == ["echo"]
+    # 6c added search_memory to the request registry. Assert set membership
+    # so future tool additions don't churn this test.
+    assert "echo" in {s["name"] for s in spy.calls[-1]["tools"]}
     assert spy.calls[-1]["tool_executor"] is not None
 
 
