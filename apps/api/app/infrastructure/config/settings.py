@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
 
+    # --- embeddings ---
+    # Locked at 1024 to match the pgvector schema 5b creates for voyage-3.5.
+    embedding_provider: Literal["mock", "voyage"] = "mock"
+    voyage_api_key: str = ""  # empty default; real value goes in .env
+    embedding_model: str = "voyage-3.5"
+    embedding_dimensions: int = 1024
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]

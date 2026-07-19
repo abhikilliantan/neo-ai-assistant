@@ -234,6 +234,7 @@ async def db_app(
     db_engine: AsyncEngine,
     app_engine: AsyncEngine,
 ) -> AsyncIterator[FastAPI]:
+    from app.ai.providers.embeddings.mock import MockEmbeddingProvider
     from app.ai.providers.mock import MockProvider
 
     settings = Settings(
@@ -243,6 +244,7 @@ async def db_app(
         redis_url="redis://x",
         jwt_secret_key="test-secret-key-at-least-32-bytes-long-xxxxx",
         ai_provider="mock",
+        embedding_provider="mock",
     )
     app = create_app(settings)
     system_sm = async_sessionmaker(db_engine, expire_on_commit=False)
@@ -251,9 +253,12 @@ async def db_app(
     app.state.system_database = Database(engine=db_engine, sessionmaker=system_sm)
     app.state.redis = None
     app.state.health_checks = []
-    # Pin chat provider explicitly — lifespan is skipped in tests, and this
-    # keeps endpoint tests deterministic regardless of env leakage.
+    # Pin providers explicitly — lifespan is skipped in tests, and this
+    # keeps endpoint tests deterministic regardless of env leakage. The
+    # embedding provider MUST be the mock; a real Voyage key on the host env
+    # must never trigger live API calls during tests.
     app.state.chat_provider = MockProvider()
+    app.state.embedding_provider = MockEmbeddingProvider()
     yield app
 
 

@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
 from app.infrastructure.db import Database
 from app.infrastructure.db.models import User
@@ -53,6 +54,11 @@ def get_redis(request: Request) -> Redis:
     return request.app.state.redis  # type: ignore[no-any-return]
 
 
+def get_embedding_provider(request: Request) -> EmbeddingProvider:
+    """Built once in the lifespan; consumed by 5b/5c. No route uses it yet."""
+    return request.app.state.embedding_provider  # type: ignore[no-any-return]
+
+
 def get_health_checks(request: Request) -> list[HealthCheck]:
     return request.app.state.health_checks  # type: ignore[no-any-return]
 
@@ -80,6 +86,7 @@ SessionDep = AppSessionDep
 
 RedisDep = Annotated[Redis, Depends(get_redis)]
 HealthChecksDep = Annotated[list[HealthCheck], Depends(get_health_checks)]
+EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
 
 
 def get_access_payload(

@@ -14,6 +14,12 @@ from app.shared.exceptions.ai import (
 )
 from app.shared.exceptions.auth import AuthenticationError, EmailAlreadyRegisteredError
 from app.shared.exceptions.common import NotFoundError
+from app.shared.exceptions.embeddings import (
+    EmbeddingProviderAPIError,
+    EmbeddingProviderAuthError,
+    EmbeddingProviderRateLimitError,
+    EmbeddingProviderUnavailableError,
+)
 
 
 def _error_body(code: str, message: str) -> dict[str, dict[str, str]]:
@@ -86,6 +92,46 @@ async def _not_found_handler(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _embedding_auth_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body(
+            "embedding_provider_auth_error",
+            "upstream embedding provider rejected our credentials",
+        ),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+    )
+
+
+async def _embedding_rate_limit_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body(
+            "embedding_provider_rate_limited",
+            "upstream embedding provider rate-limited the request",
+        ),
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
+
+
+async def _embedding_unavailable_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body(
+            "embedding_provider_unavailable",
+            "upstream embedding provider is unreachable",
+        ),
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+    )
+
+
+async def _embedding_api_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body(
+            "embedding_provider_error",
+            "upstream embedding provider returned an error",
+        ),
+        status_code=status.HTTP_502_BAD_GATEWAY,
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_handler)
     app.add_exception_handler(EmailAlreadyRegisteredError, _email_taken_handler)
@@ -95,3 +141,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProviderRateLimitError, _provider_rate_limit_handler)
     app.add_exception_handler(ProviderUnavailableError, _provider_unavailable_handler)
     app.add_exception_handler(ProviderAPIError, _provider_api_handler)
+    app.add_exception_handler(EmbeddingProviderAuthError, _embedding_auth_handler)
+    app.add_exception_handler(EmbeddingProviderRateLimitError, _embedding_rate_limit_handler)
+    app.add_exception_handler(EmbeddingProviderUnavailableError, _embedding_unavailable_handler)
+    app.add_exception_handler(EmbeddingProviderAPIError, _embedding_api_handler)
