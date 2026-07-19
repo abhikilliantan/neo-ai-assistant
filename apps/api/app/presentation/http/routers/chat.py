@@ -3,9 +3,14 @@
 Non-streaming holds a tenant-scoped DB session for the whole request (fine —
 short call). The streaming variant deliberately does NOT: it would pin a DB
 connection for the whole LLM response duration, exhausting the pool. Instead
-it resolves the user via the scoped variant and reads tenant_id from the
-token payload (no DB). Phase 4 will open a short write-transaction AFTER
-the stream to persist the assistant message.
+it opens TWO short bookending tenant write-txns — one BEFORE the stream
+(resolve/create conversation + persist the user message) and one AFTER the
+provider's `done` event (persist the assistant message + touch). Neither
+session is open across the LLM stream.
+
+If the client disconnects mid-stream, the "after" txn simply doesn't run —
+the user question is already saved from the "before" txn, and the assistant
+row is skipped. Acceptable for 4b.
 """
 
 from __future__ import annotations
@@ -13,16 +18,21 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 
 from app.application.ports.chat import ChatMessage, ChatProvider
+from app.infrastructure.db import Database
+from app.infrastructure.db.repositories import ConversationRepository, MessageRepository
 from app.presentation.http.deps import (
     CurrentTenantDep,
     CurrentUserDep,
     StreamingCurrentUserDep,
     TenantSessionDep,
+    get_app_database,
 )
 from app.presentation.http.schemas.chat import ChatRequest, ChatResponse
 from app.shared.exceptions.ai import (
@@ -31,31 +41,90 @@ from app.shared.exceptions.ai import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
+from app.shared.exceptions.auth import AuthenticationError
+from app.shared.exceptions.common import NotFoundError
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
 def get_chat_provider(request: Request) -> ChatProvider:
-    """Read the chat provider built once in the lifespan.
-
-    build_chat_provider(settings) picks mock vs anthropic per AI_PROVIDER;
-    test fixtures override app.state.chat_provider directly to pin `mock`.
-    """
     return request.app.state.chat_provider  # type: ignore[no-any-return]
 
 
 ProviderDep = Annotated[ChatProvider, Depends(get_chat_provider)]
 
+_TITLE_LIMIT = 60
+
+
+def _title_from(text: str) -> str:
+    collapsed = " ".join(text.split())
+    if not collapsed:
+        return "New conversation"
+    return collapsed[:_TITLE_LIMIT]
+
+
+def _usage_tokens(usage: object) -> tuple[int | None, int | None]:
+    """Split ChatUsage into (prompt_tokens, completion_tokens); (None, None) if absent."""
+    if usage is None:
+        return (None, None)
+    return (
+        getattr(usage, "prompt_tokens", None),
+        getattr(usage, "completion_tokens", None),
+    )
+
+
+# --- non-streaming ----------------------------------------------------------
+
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
-    _user: CurrentUserDep,
-    _session: TenantSessionDep,  # engages SET LOCAL app.current_tenant
+    user: CurrentUserDep,
+    tenant_id: CurrentTenantDep,
+    session: TenantSessionDep,  # engages SET LOCAL app.current_tenant
     provider: ProviderDep,
 ) -> ChatResponse:
+    if tenant_id is None:
+        raise AuthenticationError("user has no active tenant")
+
+    conv_repo = ConversationRepository(session)
+    msg_repo = MessageRepository(session)
+
+    if body.conversation_id is not None:
+        conv = await conv_repo.get_by_id(body.conversation_id)
+        if conv is None:
+            raise NotFoundError("conversation not found")
+    else:
+        conv = await conv_repo.create(
+            organization_id=tenant_id,
+            user_id=user.id,
+            title=_title_from(body.messages[-1].content),
+        )
+
+    await msg_repo.add(
+        organization_id=tenant_id,
+        conversation_id=conv.id,
+        role="user",
+        content=body.messages[-1].content,
+    )
+
     completion = await provider.complete(messages=body.messages)
+
+    prompt_tokens, completion_tokens = _usage_tokens(completion.usage)
+    await msg_repo.add(
+        organization_id=tenant_id,
+        conversation_id=conv.id,
+        role="assistant",
+        content=completion.content,
+        model=completion.model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        finish_reason=completion.finish_reason,
+    )
+    await conv_repo.touch(conv.id)
+
     return ChatResponse(
+        conversation_id=conv.id,
         message=ChatMessage(role="assistant", content=completion.content),
         model=completion.model,
         usage=completion.usage,
@@ -77,21 +146,141 @@ def _sse_frame(payload: dict[str, object]) -> bytes:
     return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
 
 
+async def _persist_user_and_resolve_conversation(
+    db: Database,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    conversation_id: UUID | None,
+    user_message: str,
+) -> UUID:
+    """Short tenant write-txn: resolve-or-create conversation + persist the
+    user message. Returns the conversation id. Session opens and closes here
+    — nothing is held for the caller.
+    """
+    async with db.sessionmaker() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.current_tenant', :t, true)").bindparams(t=str(tenant_id))
+        )
+        conv_repo = ConversationRepository(session)
+        msg_repo = MessageRepository(session)
+
+        if conversation_id is not None:
+            conv = await conv_repo.get_by_id(conversation_id)
+            if conv is None:
+                raise NotFoundError("conversation not found")
+        else:
+            conv = await conv_repo.create(
+                organization_id=tenant_id,
+                user_id=user_id,
+                title=_title_from(user_message),
+            )
+        await msg_repo.add(
+            organization_id=tenant_id,
+            conversation_id=conv.id,
+            role="user",
+            content=user_message,
+        )
+        return conv.id
+
+
+async def _persist_assistant_and_touch(
+    db: Database,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    content: str,
+    model: str | None,
+    usage: object,
+    finish_reason: str | None,
+) -> None:
+    """Short tenant write-txn to persist the assistant message + touch the
+    conversation's last_message_at. Opens + closes its own session.
+    """
+    prompt_tokens, completion_tokens = _usage_tokens(usage)
+    async with db.sessionmaker() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.current_tenant', :t, true)").bindparams(t=str(tenant_id))
+        )
+        await MessageRepository(session).add(
+            organization_id=tenant_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=content,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            finish_reason=finish_reason,
+        )
+        await ConversationRepository(session).touch(conversation_id)
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     body: ChatRequest,
-    _user: StreamingCurrentUserDep,  # scoped session — no held DB connection
-    _tenant: CurrentTenantDep,  # read from token; Phase 4 uses it
+    user: StreamingCurrentUserDep,  # scoped session — no held DB connection
+    tenant_id: CurrentTenantDep,  # from token; no DB call
     provider: ProviderDep,
+    db: Annotated[Database, Depends(get_app_database)],
 ) -> StreamingResponse:
+    if tenant_id is None:
+        raise AuthenticationError("user has no active tenant")
+
+    # --- Txn A: BEFORE the stream ------------------------------------------
+    # Resolve/create conversation + persist the user message in a short txn,
+    # then release the connection. Errors here (NotFoundError, provider
+    # config issues) still surface as normal HTTP responses because
+    # StreamingResponse hasn't been returned yet.
+    conv_id = await _persist_user_and_resolve_conversation(
+        db,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        conversation_id=body.conversation_id,
+        user_message=body.messages[-1].content,
+    )
+
     async def _generator() -> AsyncIterator[bytes]:
+        # Leading endpoint meta frame — raw dict via json.dumps (same shape
+        # as the terminal error frame). NOT a provider ChatStreamEvent so the
+        # provider VO stays {delta, done} only.
+        yield _sse_frame({"type": "meta", "conversation_id": str(conv_id)})
+
+        accumulated: list[str] = []
+        done_model: str | None = None
+        done_usage: object = None
+        done_finish_reason: str | None = None
+
         try:
             async for event in provider.stream(messages=body.messages):
                 yield f"data: {event.model_dump_json()}\n\n".encode()
+                if event.type == "delta":
+                    accumulated.append(event.content)
+                elif event.type == "done":
+                    done_model = event.model
+                    done_usage = event.usage
+                    done_finish_reason = event.finish_reason
         except _PROVIDER_ERROR_TYPES as e:
-            # Headers already sent; can't change status. Emit terminal error frame.
             code = _PROVIDER_ERROR_CODES[type(e)]
             yield _sse_frame({"type": "error", "code": code, "message": str(e) or code})
+            # Provider failed — do NOT persist an assistant row.
+            return
+
+        if done_model is None:
+            # Stream ended without a done event (defensive; providers should
+            # always emit one). Skip persistence rather than write a partial.
+            return
+
+        # --- Txn B: AFTER the stream ---------------------------------------
+        # Fresh short session, GUC set again, persist assistant + touch.
+        await _persist_assistant_and_touch(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conv_id,
+            content="".join(accumulated),
+            model=done_model,
+            usage=done_usage,
+            finish_reason=done_finish_reason,
+        )
 
     return StreamingResponse(
         _generator(),

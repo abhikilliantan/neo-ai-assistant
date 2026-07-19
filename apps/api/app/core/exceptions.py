@@ -13,6 +13,7 @@ from app.shared.exceptions.ai import (
     ProviderUnavailableError,
 )
 from app.shared.exceptions.auth import AuthenticationError, EmailAlreadyRegisteredError
+from app.shared.exceptions.common import NotFoundError
 
 
 def _error_body(code: str, message: str) -> dict[str, dict[str, str]]:
@@ -78,9 +79,17 @@ async def _provider_api_handler(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _not_found_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("not_found", str(exc) or "resource not found"),
+        status_code=status.HTTP_404_NOT_FOUND,
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_handler)
     app.add_exception_handler(EmailAlreadyRegisteredError, _email_taken_handler)
+    app.add_exception_handler(NotFoundError, _not_found_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(ProviderAuthError, _provider_auth_handler)
     app.add_exception_handler(ProviderRateLimitError, _provider_rate_limit_handler)

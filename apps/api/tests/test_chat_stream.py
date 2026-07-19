@@ -68,6 +68,9 @@ async def test_chat_stream_happy_path(db_app) -> None:  # type: ignore[no-untype
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/event-stream")
     events = _parse_sse(r.text)
+    # First frame is the endpoint meta frame carrying conversation_id.
+    assert events[0]["type"] == "meta"
+    assert events[0]["conversation_id"]
     deltas = [e for e in events if e["type"] == "delta"]
     dones = [e for e in events if e["type"] == "done"]
     assert "".join(d["content"] for d in deltas) == "(mock) hello world"
@@ -145,7 +148,8 @@ async def test_chat_stream_mid_stream_provider_error_emits_error_frame(
 
     assert r.status_code == 200  # headers already sent when error hits
     events = _parse_sse(r.text)
-    assert events[0]["type"] == "delta"
-    assert events[0]["content"] == "partial"
+    assert events[0]["type"] == "meta"
+    assert events[1]["type"] == "delta"
+    assert events[1]["content"] == "partial"
     assert events[-1]["type"] == "error"
     assert events[-1]["code"] == "provider_rate_limited"
