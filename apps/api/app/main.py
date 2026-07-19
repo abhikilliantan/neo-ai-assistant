@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.application.ports.health import HealthCheck
@@ -14,7 +15,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.middleware import RequestContextMiddleware
 from app.infrastructure.cache import build_redis
 from app.infrastructure.config import Settings, get_settings
-from app.infrastructure.db import build_database
+from app.infrastructure.db import build_database, build_system_database
 from app.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
 from app.infrastructure.logging import configure_logging, get_logger
 from app.presentation.http.routers import auth_router, system_router
@@ -25,7 +26,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     log = get_logger("lifespan")
 
-    database = build_database(settings)
+    database = build_database(settings)  # neo_app (RLS-enforced)
+    system_database = build_system_database(settings)  # neo (privileged)
     redis = build_redis(settings)
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
@@ -33,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ]
 
     app.state.database = database
+    app.state.system_database = system_database
     app.state.redis = redis
     app.state.health_checks = checks
     log.info("startup", version=__version__, env=settings.python_env)
@@ -43,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("shutdown")
         await redis.aclose()
         await database.dispose()
+        await system_database.dispose()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -64,6 +68,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Belt-and-braces: even if a `/_test/*` route is ever accidentally wired
+    # into production code, refuse to serve it outside python_env=="test".
+    # Test suites build their own app via create_app(Settings(python_env="test"))
+    # and mount `/_test/*` routes onto that instance only.
+    if settings.python_env != "test":
+
+        @app.middleware("http")
+        async def _block_test_routes(request: Request, call_next):  # type: ignore[no-untyped-def]
+            if request.url.path.startswith("/_test/"):
+                return JSONResponse({"error": "not found"}, status_code=404)
+            return await call_next(request)
 
     register_exception_handlers(app)
     app.include_router(system_router)

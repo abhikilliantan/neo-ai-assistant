@@ -7,41 +7,11 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from app.infrastructure.db.models import (
-        Membership,
-        Organization,
-        Role,
-        Session,
-        User,
-    )
+    from app.infrastructure.db.models import Membership, Organization, Session, User
 
 
 class UserRepositoryPort(Protocol):
-    async def create(self, *, email: str, password_hash: str) -> User: ...
-    async def get_by_email_normalized(self, email: str) -> User | None: ...
     async def get_by_id(self, user_id: UUID) -> User | None: ...
-
-
-class OrganizationRepositoryPort(Protocol):
-    async def create_with_unique_slug(self, name: str) -> Organization: ...
-
-
-class MembershipRepositoryPort(Protocol):
-    async def create(
-        self,
-        *,
-        user_id: UUID,
-        organization_id: UUID,
-        role_id: UUID,
-        status: str = "active",
-    ) -> Membership: ...
-    async def list_for_user(
-        self, user_id: UUID, *, active_only: bool = True
-    ) -> list[Membership]: ...
-
-
-class RoleRepositoryPort(Protocol):
-    async def get_by_name(self, name: str) -> Role | None: ...
 
 
 class SessionRepositoryPort(Protocol):
@@ -56,3 +26,20 @@ class SessionRepositoryPort(Protocol):
     ) -> Session: ...
     async def get_by_refresh_hash(self, refresh_token_hash: str) -> Session | None: ...
     async def revoke(self, session_id: UUID) -> None: ...
+
+
+class SystemRepositoryPort(Protocol):
+    """Privileged surface — the only cross-tenant path. Keep this tiny."""
+
+    async def find_user_by_email(self, email_normalized: str) -> User | None: ...
+    async def list_memberships_for_user(
+        self, user_id: UUID, *, active_only: bool = True
+    ) -> list[Membership]: ...
+    async def register_bootstrap(
+        self,
+        *,
+        email_normalized: str,
+        password_hash: str,
+        org_name: str,
+        role_name: str = "owner",
+    ) -> tuple[User, Organization, Membership]: ...

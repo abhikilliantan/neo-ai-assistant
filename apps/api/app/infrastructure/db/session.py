@@ -27,8 +27,18 @@ class Database:
 
 
 def build_database(settings: Settings) -> Database:
+    """Runtime (neo_app) database — RLS-scoped request DML."""
+    return _build(settings, settings.app_database_url)
+
+
+def build_system_database(settings: Settings) -> Database:
+    """Privileged (neo) database — migrations + the tiny SystemRepository surface."""
+    return _build(settings, settings.database_url)
+
+
+def _build(settings: Settings, url: str) -> Database:
     engine = create_async_engine(
-        settings.database_url,
+        url,
         echo=settings.db_echo,
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_pool_max_overflow,

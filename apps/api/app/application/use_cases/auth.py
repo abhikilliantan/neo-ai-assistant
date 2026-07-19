@@ -1,6 +1,13 @@
 """Auth use cases: register, login, refresh, logout.
 
 Depend on repository ports + phase-2b security primitives. No HTTP, no DB imports.
+
+Split between two DB roles:
+  - `system` (SystemRepositoryPort) — privileged, cross-tenant. Used for
+    user lookup by email, membership resolution, and register bootstrap.
+  - `users` / `sessions` — RLS-scoped app-role reads/writes. Sessions/users
+    have no RLS themselves; using the app role keeps the "everything through
+    RLS unless proven otherwise" invariant.
 """
 
 from __future__ import annotations
@@ -10,10 +17,8 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from app.application.ports.repositories import (
-    MembershipRepositoryPort,
-    OrganizationRepositoryPort,
-    RoleRepositoryPort,
     SessionRepositoryPort,
+    SystemRepositoryPort,
     UserRepositoryPort,
 )
 from app.infrastructure.config import get_settings
@@ -30,8 +35,7 @@ from app.infrastructure.security import (
 )
 from app.shared.exceptions.auth import AuthenticationError, EmailAlreadyRegisteredError
 
-# A fixed argon2 hash used as a decoy when the login user doesn't exist.
-# Keeps timing constant so callers can't enumerate valid emails by response time.
+# Decoy hash so unknown-user login still runs argon2 verify → constant timing.
 _DECOY_PASSWORD_HASH = hash_password("decoy-value-never-matches")
 
 
@@ -87,34 +91,22 @@ async def register(
     password: str,
     organization_name: str | None = None,
     *,
-    users: UserRepositoryPort,
-    organizations: OrganizationRepositoryPort,
-    memberships: MembershipRepositoryPort,
-    roles: RoleRepositoryPort,
+    system: SystemRepositoryPort,
     sessions: SessionRepositoryPort,
     user_agent: str | None = None,
     ip_address: str | None = None,
 ) -> AuthResult:
     email_norm = normalize_email(email)
 
-    if await users.get_by_email_normalized(email_norm) is not None:
+    if await system.find_user_by_email(email_norm) is not None:
         raise EmailAlreadyRegisteredError(email_norm)
 
-    owner_role = await roles.get_by_name("owner")
-    if owner_role is None:
-        # Seed data missing — indicates a broken deploy, not a user error.
-        raise RuntimeError("system role 'owner' is missing; seed data not applied")
-
-    user = await users.create(email=email_norm, password_hash=hash_password(password))
-
     org_name = organization_name or f"{email_norm.split('@')[0]}'s workspace"
-    org = await organizations.create_with_unique_slug(org_name)
-
-    # Guardrail: only embed tenant_id in the token AFTER the membership row exists.
-    await memberships.create(
-        user_id=user.id,
-        organization_id=org.id,
-        role_id=owner_role.id,
+    user, org, _membership = await system.register_bootstrap(
+        email_normalized=email_norm,
+        password_hash=hash_password(password),
+        org_name=org_name,
+        role_name="owner",
     )
 
     return await _issue_tokens(
@@ -131,25 +123,22 @@ async def login(
     email: str,
     password: str,
     *,
-    users: UserRepositoryPort,
-    memberships: MembershipRepositoryPort,
+    system: SystemRepositoryPort,
     sessions: SessionRepositoryPort,
     user_agent: str | None = None,
     ip_address: str | None = None,
 ) -> AuthResult:
     email_norm = normalize_email(email)
-    user = await users.get_by_email_normalized(email_norm)
+    user = await system.find_user_by_email(email_norm)
 
-    # Constant-time behavior: always run argon2 verify, even for unknown users.
+    # Constant-time: run argon2 verify even when the user is missing.
     hash_to_check = user.password_hash if user is not None else _DECOY_PASSWORD_HASH
     if not verify_password(password, hash_to_check) or user is None:
         raise AuthenticationError("invalid credentials")
-
     if not user.is_active:
         raise AuthenticationError("invalid credentials")
 
-    active = await memberships.list_for_user(user.id, active_only=True)
-    # Guardrail: only embed tenant_id when a membership exists.
+    active = await system.list_memberships_for_user(user.id, active_only=True)
     tenant_id = active[0].organization_id if active else None
 
     return await _issue_tokens(
@@ -166,8 +155,8 @@ async def refresh(
     refresh_token: str,
     *,
     users: UserRepositoryPort,
-    memberships: MembershipRepositoryPort,
     sessions: SessionRepositoryPort,
+    system: SystemRepositoryPort,
     user_agent: str | None = None,
     ip_address: str | None = None,
 ) -> AuthResult:
@@ -186,13 +175,12 @@ async def refresh(
     if user is None or not user.is_active:
         raise AuthenticationError("user not found or inactive")
 
-    # Rotate: revoke old FIRST, then mint new. Prevents a window where both are valid.
+    # Rotate: revoke old FIRST, then mint new — prevents two-active-refresh window.
     await sessions.revoke(stored.id)
 
-    active = await memberships.list_for_user(user.id, active_only=True)
-    # Note: refresh does NOT preserve the previously-active tenant selection —
-    # it picks the user's first active membership. Explicit org-switch endpoint
-    # will replace this behavior later.
+    active = await system.list_memberships_for_user(user.id, active_only=True)
+    # Refresh does NOT preserve the previously-active tenant selection —
+    # picks the first active membership. `/orgs/switch` will replace this later.
     tenant_id = active[0].organization_id if active else None
 
     return await _issue_tokens(
@@ -210,7 +198,7 @@ async def logout(
     *,
     sessions: SessionRepositoryPort,
 ) -> None:
-    """Idempotent — revoking a missing/already-revoked session is a no-op success."""
+    """Idempotent — no-op success on missing/already-revoked session."""
     stored = await sessions.get_by_refresh_hash(hash_refresh_token(refresh_token))
     if stored is not None and stored.revoked_at is None:
         await sessions.revoke(stored.id)

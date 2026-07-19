@@ -1,4 +1,14 @@
-"""Concrete repositories. Caller (use case) owns the transaction."""
+"""Concrete repositories.
+
+Two flavors, wired via distinct FastAPI session deps:
+  - `UserRepository` / `SessionRepository` — used with `AppSessionDep`
+    (neo_app, RLS-enforced). Only touch global or tenant-scoped tables
+    where either no RLS applies OR the caller has set the tenant GUC.
+  - `SystemRepository` — used with `SystemSessionDep` (neo, privileged).
+    The ONLY code path that goes cross-tenant. Deliberately tiny.
+
+Caller (dep) owns the transaction; repositories just flush.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +17,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.db.models import (
@@ -17,92 +28,15 @@ from app.infrastructure.db.models import (
     User,
 )
 
+# --- app-role (neo_app) repositories -----------------------------------------
+
 
 class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create(self, *, email: str, password_hash: str) -> User:
-        user = User(email=email, password_hash=password_hash)
-        self.session.add(user)
-        await self.session.flush()
-        return user
-
-    async def get_by_email_normalized(self, email: str) -> User | None:
-        # Column stores whatever was written; normalize_email at write time
-        # keeps this exact-match consistent with the lower(email) unique index.
-        stmt = select(User).where(User.email == email)
-        return (await self.session.execute(stmt)).scalar_one_or_none()
-
     async def get_by_id(self, user_id: UUID) -> User | None:
         return await self.session.get(User, user_id)
-
-
-def _slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "org"
-
-
-class OrganizationRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def create_with_unique_slug(self, name: str) -> Organization:
-        base = _slugify(name)
-        # ponytail: precheck-then-insert; unique constraint is final arbiter.
-        # Bounded retry — a tight race would hit the DB constraint, which we let raise.
-        for suffix in ("", *(f"-{i}" for i in range(2, 100))):
-            candidate = f"{base}{suffix}"
-            existing = (
-                await self.session.execute(
-                    select(Organization.id).where(Organization.slug == candidate)
-                )
-            ).first()
-            if existing is None:
-                org = Organization(name=name, slug=candidate)
-                self.session.add(org)
-                await self.session.flush()
-                return org
-        raise RuntimeError(f"could not find a free slug for {name!r} after 99 tries")
-
-
-class MembershipRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def create(
-        self,
-        *,
-        user_id: UUID,
-        organization_id: UUID,
-        role_id: UUID,
-        status: str = "active",
-    ) -> Membership:
-        m = Membership(
-            user_id=user_id,
-            organization_id=organization_id,
-            role_id=role_id,
-            status=status,
-        )
-        self.session.add(m)
-        await self.session.flush()
-        return m
-
-    async def list_for_user(self, user_id: UUID, *, active_only: bool = True) -> list[Membership]:
-        stmt = select(Membership).where(Membership.user_id == user_id)
-        if active_only:
-            stmt = stmt.where(Membership.status == "active")
-        stmt = stmt.order_by(Membership.created_at.asc())
-        return list((await self.session.execute(stmt)).scalars().all())
-
-
-class RoleRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def get_by_name(self, name: str) -> Role | None:
-        stmt = select(Role).where(Role.name == name)
-        return (await self.session.execute(stmt)).scalar_one_or_none()
 
 
 class SessionRepository:
@@ -138,3 +72,86 @@ class SessionRepository:
         if s is not None and s.revoked_at is None:
             s.revoked_at = datetime.now(UTC)
             await self.session.flush()
+
+
+# --- system-role (neo) repository --------------------------------------------
+
+
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "org"
+
+
+class SystemRepository:
+    """Privileged surface. THE ONLY cross-tenant code path.
+
+    Three ops:
+      - find_user_by_email        — pre-tenant user lookup (login/register)
+      - list_memberships_for_user — cross-tenant read to pick active org
+      - register_bootstrap        — atomic (user + org + first membership)
+
+    Adding an operation here widens the auditable surface — do it only
+    when a real requirement demands cross-tenant access at the DB layer.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def find_user_by_email(self, email_normalized: str) -> User | None:
+        stmt = select(User).where(User.email == email_normalized)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def list_memberships_for_user(
+        self, user_id: UUID, *, active_only: bool = True
+    ) -> list[Membership]:
+        stmt = select(Membership).where(Membership.user_id == user_id)
+        if active_only:
+            stmt = stmt.where(Membership.status == "active")
+        stmt = stmt.order_by(Membership.created_at.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def register_bootstrap(
+        self,
+        *,
+        email_normalized: str,
+        password_hash: str,
+        org_name: str,
+        role_name: str = "owner",
+    ) -> tuple[User, Organization, Membership]:
+        """Create user + org + first membership atomically (single txn on neo)."""
+        role = (
+            await self.session.execute(select(Role).where(Role.name == role_name))
+        ).scalar_one_or_none()
+        if role is None:
+            raise RuntimeError(f"system role {role_name!r} is missing; seed data not applied")
+
+        user = User(email=email_normalized, password_hash=password_hash)
+        self.session.add(user)
+        try:
+            await self.session.flush()
+        except IntegrityError as e:
+            # Race with a concurrent register — surface as domain-level dup.
+            from app.shared.exceptions.auth import EmailAlreadyRegisteredError
+
+            raise EmailAlreadyRegisteredError(email_normalized) from e
+
+        base = _slugify(org_name)
+        for suffix in ("", *(f"-{i}" for i in range(2, 100))):
+            candidate = f"{base}{suffix}"
+            existing = (
+                await self.session.execute(
+                    select(Organization.id).where(Organization.slug == candidate)
+                )
+            ).first()
+            if existing is None:
+                org = Organization(name=org_name, slug=candidate)
+                self.session.add(org)
+                await self.session.flush()
+                break
+        else:
+            raise RuntimeError(f"could not find a free slug for {org_name!r}")
+
+        membership = Membership(user_id=user.id, organization_id=org.id, role_id=role.id)
+        self.session.add(membership)
+        await self.session.flush()
+        return user, org, membership

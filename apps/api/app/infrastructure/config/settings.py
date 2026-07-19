@@ -38,9 +38,17 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 30
 
     # --- database ---
+    # `database_url` — privileged role (neo, owner). Used by Alembic and the
+    # tiny SystemRepository. Not used for regular request-scoped DML.
     database_url: str = Field(
         default="postgresql+asyncpg://neo:neo@localhost:5432/neo",
-        description="Async SQLAlchemy URL (postgresql+asyncpg://...)",
+        description="Async SQLAlchemy URL for the privileged role (migrations + system ops)",
+    )
+    # `app_database_url` — runtime role (neo_app, NOSUPERUSER NOBYPASSRLS).
+    # Feature endpoints connect as this so RLS (with FORCE) actually applies.
+    app_database_url: str = Field(
+        default="postgresql+asyncpg://neo_app:neo_app@localhost:5432/neo",
+        description="Async SQLAlchemy URL for the runtime app role (RLS-scoped)",
     )
     db_echo: bool = False
     db_pool_size: int = 10
