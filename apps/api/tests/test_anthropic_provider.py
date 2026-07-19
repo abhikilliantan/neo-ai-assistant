@@ -189,3 +189,119 @@ async def test_close_closes_underlying_client() -> None:
     provider = _provider(create)
     await provider.close()
     provider._client.close.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+# --- stream() tests ---------------------------------------------------------
+
+
+class _FakeStreamCtx:
+    """Fake async ctx manager mimicking client.messages.stream()."""
+
+    def __init__(self, deltas: list[str], final: SimpleNamespace) -> None:
+        self._deltas = deltas
+        self._final = final
+
+    async def __aenter__(self) -> _FakeStreamCtx:
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool:
+        return False
+
+    @property
+    def text_stream(self) -> Any:
+        async def gen() -> Any:
+            for d in self._deltas:
+                yield d
+
+        return gen()
+
+    async def get_final_message(self) -> SimpleNamespace:
+        return self._final
+
+
+def _stream_provider(stream_ctx: _FakeStreamCtx) -> tuple[AnthropicProvider, MagicMock]:
+    client = MagicMock()
+    stream_mock = MagicMock(return_value=stream_ctx)
+    client.messages.stream = stream_mock
+    client.close = AsyncMock()
+    provider = AnthropicProvider(client=client, model="claude-sonnet-5", max_tokens=1024)
+    return provider, stream_mock
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_deltas_then_done() -> None:
+    final = _fake_response(
+        text="",
+        model="claude-sonnet-5-fake",
+        input_tokens=11,
+        output_tokens=9,
+        stop_reason="end_turn",
+    )
+    ctx = _FakeStreamCtx(deltas=["hello ", "from ", "claude"], final=final)
+    provider, _ = _stream_provider(ctx)
+
+    events = [e async for e in provider.stream(messages=[ChatMessage(role="user", content="hi")])]
+
+    # deltas concatenate
+    deltas = [e for e in events if e.type == "delta"]
+    assert "".join(e.content for e in deltas) == "hello from claude"
+
+    # final is a done event with mapped usage/model/finish_reason
+    assert events[-1].type == "done"
+    done = events[-1]
+    assert done.model == "claude-sonnet-5-fake"
+    assert done.usage is not None
+    assert done.usage.prompt_tokens == 11
+    assert done.usage.completion_tokens == 9
+    assert done.finish_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_stream_reuses_prepare_kwargs_system_extraction() -> None:
+    """System messages go into system= kwarg on stream(), not into messages."""
+    ctx = _FakeStreamCtx(deltas=["ok"], final=_fake_response())
+    provider, stream_mock = _stream_provider(ctx)
+
+    _ = [
+        e
+        async for e in provider.stream(
+            messages=[
+                ChatMessage(role="system", content="rule A"),
+                ChatMessage(role="system", content="rule B"),
+                ChatMessage(role="user", content="hi"),
+            ]
+        )
+    ]
+
+    call_kwargs = stream_mock.call_args.kwargs
+    assert call_kwargs["system"] == "rule A\n\nrule B"
+    assert [m["role"] for m in call_kwargs["messages"]] == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_stream_missing_stop_reason_falls_back_to_stop() -> None:
+    final = _fake_response(stop_reason=None)  # type: ignore[arg-type]
+    ctx = _FakeStreamCtx(deltas=["x"], final=final)
+    provider, _ = _stream_provider(ctx)
+    events = [e async for e in provider.stream(messages=[ChatMessage(role="user", content="hi")])]
+    assert events[-1].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_stream_translates_sdk_exception_at_open() -> None:
+    """If entering the stream ctx raises an SDK exception, translate to domain."""
+
+    class _RaisingCtx:
+        async def __aenter__(self) -> None:
+            raise AuthenticationError("bad key", response=_http_response(401), body=None)
+
+        async def __aexit__(self, *_: Any) -> bool:
+            return False
+
+    client = MagicMock()
+    client.messages.stream = MagicMock(return_value=_RaisingCtx())
+    client.close = AsyncMock()
+    provider = AnthropicProvider(client=client, model="claude-sonnet-5", max_tokens=1024)
+
+    with pytest.raises(ProviderAuthError):
+        _ = [e async for e in provider.stream(messages=[ChatMessage(role="user", content="hi")])]

@@ -130,9 +130,26 @@ async def get_current_user(
     return user
 
 
+async def get_current_user_scoped(
+    payload: AccessPayloadDep,
+    db: Annotated[Database, Depends(get_app_database)],
+) -> User:
+    """Streaming-safe variant: opens/closes a session inside this function so
+    NO pooled DB connection is held for the response duration. Use in endpoints
+    that return StreamingResponse; the regular `get_current_user` keeps the
+    session open across the response body via generator-dep teardown.
+    """
+    async with db.sessionmaker() as session:
+        user = await UserRepository(session).get_by_id(UUID(payload.sub))
+        if user is None or not user.is_active:
+            raise AuthenticationError("user not found or inactive")
+        return user
+
+
 def get_current_tenant(payload: AccessPayloadDep) -> UUID | None:
     return UUID(payload.tenant_id) if payload.tenant_id is not None else None
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+StreamingCurrentUserDep = Annotated[User, Depends(get_current_user_scoped)]
 CurrentTenantDep = Annotated[UUID | None, Depends(get_current_tenant)]

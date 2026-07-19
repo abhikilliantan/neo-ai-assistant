@@ -6,8 +6,17 @@ real provider (Phase 3) lands.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
-from app.application.ports.chat import ChatCompletion, ChatMessage
+from app.application.ports.chat import (
+    ChatCompletion,
+    ChatMessage,
+    ChatStreamEvent,
+)
+
+
+def _last_user_content(messages: list[ChatMessage]) -> str:
+    return next((m.content for m in reversed(messages) if m.role == "user"), "")
 
 
 class MockProvider:
@@ -19,12 +28,28 @@ class MockProvider:
         temperature: float = 0.7,
     ) -> ChatCompletion:
         await asyncio.sleep(0)  # keep async boundary honest
-        last_user = next(
-            (m.content for m in reversed(messages) if m.role == "user"),
-            "",
-        )
         return ChatCompletion(
-            content=f"(mock) {last_user}",
+            content=f"(mock) {_last_user_content(messages)}",
+            model=model or "mock-1",
+            usage=None,
+            finish_reason="stop",
+        )
+
+    async def stream(
+        self,
+        *,
+        messages: list[ChatMessage],
+        model: str | None = None,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[ChatStreamEvent]:
+        text = f"(mock) {_last_user_content(messages)}"
+        # Word-chunk deltas — first word carries no leading space, rest prepend one.
+        for i, word in enumerate(text.split(" ")):
+            chunk = word if i == 0 else " " + word
+            yield ChatStreamEvent(type="delta", content=chunk)
+            await asyncio.sleep(0)
+        yield ChatStreamEvent(
+            type="done",
             model=model or "mock-1",
             usage=None,
             finish_reason="stop",
