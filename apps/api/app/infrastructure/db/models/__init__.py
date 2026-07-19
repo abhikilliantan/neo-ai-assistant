@@ -2,6 +2,12 @@
 
 from app.infrastructure.db.models.chat import MESSAGE_ROLES, Conversation, Message
 from app.infrastructure.db.models.identity import Session, User
+from app.infrastructure.db.models.memory import (
+    EMBEDDING_DIMENSION,
+    MEMORY_KINDS,
+    Memory,
+    UserPreference,
+)
 from app.infrastructure.db.models.rbac import Permission, Role, RolePermission
 from app.infrastructure.db.models.tenancy import (
     MEMBERSHIP_STATUSES,
@@ -11,11 +17,14 @@ from app.infrastructure.db.models.tenancy import (
 )
 
 __all__ = [
+    "EMBEDDING_DIMENSION",
     "MEMBERSHIP_STATUSES",
+    "MEMORY_KINDS",
     "MESSAGE_ROLES",
     "ApiKey",
     "Conversation",
     "Membership",
+    "Memory",
     "Message",
     "Organization",
     "Permission",
@@ -23,4 +32,5 @@ __all__ = [
     "RolePermission",
     "Session",
     "User",
+    "UserPreference",
 ]

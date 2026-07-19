@@ -16,18 +16,21 @@ import re
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.db.models import (
     Conversation,
     Membership,
+    Memory,
     Message,
     Organization,
     Role,
     Session,
     User,
+    UserPreference,
 )
 
 # --- app-role (neo_app) repositories -----------------------------------------
@@ -162,6 +165,159 @@ class MessageRepository:
             select(Message)
             .where(Message.conversation_id == conversation_id)
             .order_by(Message.created_at.asc(), Message.id.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+
+class MemoryRepository:
+    """Tenant-scoped. RLS filters organization_id at the DB layer; every
+    method takes it explicitly so the app-layer intent is audit-visible.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def add(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        content: str,
+        embedding: list[float],
+        embedding_model: str,
+        kind: str = "fact",
+        source: str | None = None,
+    ) -> Memory:
+        m = Memory(
+            organization_id=organization_id,
+            user_id=user_id,
+            content=content,
+            embedding=embedding,
+            embedding_model=embedding_model,
+            kind=kind,
+            source=source,
+        )
+        self.session.add(m)
+        await self.session.flush()
+        return m
+
+    async def search_similar(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        query_embedding: list[float],
+        limit: int = 5,
+        kind: str | None = None,
+    ) -> list[tuple[Memory, float]]:
+        """Cosine-similarity ANN search, tenant + user scoped, soft-delete aware.
+
+        Uses pgvector's `<=>` operator (SQLAlchemy: `.cosine_distance()`),
+        backed by the HNSW `vector_cosine_ops` index from the migration.
+        RLS applies inside the DB, so even without the explicit
+        organization_id predicate a cross-tenant row would be filtered out;
+        the predicate is kept for explicitness and for future EXPLAIN diffing.
+
+        Returned similarity = 1 - cosine_distance ∈ [-1, 1] (in [0, 1] for
+        L2-normalized vectors, which both mock and Voyage produce).
+        """
+        distance = Memory.embedding.cosine_distance(query_embedding).label("distance")
+        stmt = (
+            select(Memory, distance)
+            .where(Memory.organization_id == organization_id)
+            .where(Memory.user_id == user_id)
+            .where(Memory.deleted_at.is_(None))
+        )
+        if kind is not None:
+            stmt = stmt.where(Memory.kind == kind)
+        stmt = stmt.order_by(distance.asc()).limit(limit)
+        rows = (await self.session.execute(stmt)).all()
+        return [(memory, 1.0 - float(dist)) for memory, dist in rows]
+
+    async def list_for_user(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        active_only: bool = True,
+    ) -> list[Memory]:
+        stmt = (
+            select(Memory)
+            .where(Memory.organization_id == organization_id)
+            .where(Memory.user_id == user_id)
+        )
+        if active_only:
+            stmt = stmt.where(Memory.deleted_at.is_(None))
+        stmt = stmt.order_by(Memory.created_at.desc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def soft_delete(self, memory_id: UUID) -> None:
+        m = await self.session.get(Memory, memory_id)
+        if m is None or m.deleted_at is not None:
+            return
+        m.deleted_at = datetime.now(UTC)
+        await self.session.flush()
+
+
+class UserPreferenceRepository:
+    """Tenant-scoped. Upserts on the composite (org, user, key) unique constraint."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def upsert(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        key: str,
+        value: object,
+    ) -> UserPreference:
+        stmt = pg_insert(UserPreference).values(
+            organization_id=organization_id,
+            user_id=user_id,
+            key=key,
+            value=value,
+        )
+        # ORM's onupdate=func.now() doesn't fire on raw INSERT ... ON CONFLICT,
+        # so set updated_at explicitly on the conflict branch.
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_user_preferences_org_user_key",
+            set_={"value": stmt.excluded.value, "updated_at": func.now()},
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+        pref = await self.get(organization_id=organization_id, user_id=user_id, key=key)
+        # RLS-scoped SELECT after an RLS-scoped INSERT must find the row.
+        assert pref is not None
+        return pref
+
+    async def get(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        key: str,
+    ) -> UserPreference | None:
+        stmt = (
+            select(UserPreference)
+            .where(UserPreference.organization_id == organization_id)
+            .where(UserPreference.user_id == user_id)
+            .where(UserPreference.key == key)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def list_for_user(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+    ) -> list[UserPreference]:
+        stmt = (
+            select(UserPreference)
+            .where(UserPreference.organization_id == organization_id)
+            .where(UserPreference.user_id == user_id)
+            .order_by(UserPreference.key.asc())
         )
         return list((await self.session.execute(stmt)).scalars().all())
 

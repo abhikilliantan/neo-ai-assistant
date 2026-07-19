@@ -10,10 +10,12 @@ if TYPE_CHECKING:
     from app.infrastructure.db.models import (
         Conversation,
         Membership,
+        Memory,
         Message,
         Organization,
         Session,
         User,
+        UserPreference,
     )
 
 
@@ -84,3 +86,61 @@ class MessageRepositoryPort(Protocol):
         finish_reason: str | None = None,
     ) -> Message: ...
     async def list_for_conversation(self, conversation_id: UUID) -> list[Message]: ...
+
+
+# --- memory + preferences (tenant-scoped, RLS-enforced) ---------------------
+
+
+class MemoryRepositoryPort(Protocol):
+    async def add(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        content: str,
+        embedding: list[float],
+        embedding_model: str,
+        kind: str = "fact",
+        source: str | None = None,
+    ) -> Memory: ...
+    async def search_similar(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        query_embedding: list[float],
+        limit: int = 5,
+        kind: str | None = None,
+    ) -> list[tuple[Memory, float]]: ...
+    async def list_for_user(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        active_only: bool = True,
+    ) -> list[Memory]: ...
+    async def soft_delete(self, memory_id: UUID) -> None: ...
+
+
+class UserPreferenceRepositoryPort(Protocol):
+    async def upsert(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        key: str,
+        value: object,
+    ) -> UserPreference: ...
+    async def get(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        key: str,
+    ) -> UserPreference | None: ...
+    async def list_for_user(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+    ) -> list[UserPreference]: ...
