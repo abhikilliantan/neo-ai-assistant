@@ -10,11 +10,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Populate Base.metadata for autogenerate.
+import app.infrastructure.db.models  # noqa: F401
 from app.infrastructure.config import get_settings
 from app.infrastructure.db import Base
-
-# Import ORM modules here so Base.metadata is populated for autogenerate.
-# (No models yet — add imports as they land.)
 
 config = context.config
 if config.config_file_name is not None:
