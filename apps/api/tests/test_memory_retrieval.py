@@ -52,9 +52,15 @@ class _RecordingProvider:
         self,
         *,
         messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: Any = None,
         model: str | None = None,
         temperature: float = 0.7,
     ) -> AsyncIterator[ChatStreamEvent]:
+        # 6d widened stream() the same way 6b widened complete(); this
+        # recording double accepts the extra kwargs to stay Protocol-conformant.
+        # MockProvider ignores them; behavior unchanged.
+        del tools, tool_executor
         self.stream_calls.append(list(messages))
         async for e in self._inner.stream(messages=messages, model=model, temperature=temperature):
             yield e

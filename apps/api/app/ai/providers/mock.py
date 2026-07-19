@@ -47,9 +47,16 @@ class MockProvider:
         self,
         *,
         messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: ToolExecutor | None = None,
         model: str | None = None,
         temperature: float = 0.7,
     ) -> AsyncIterator[ChatStreamEvent]:
+        # Same rationale as complete(): accepted for Protocol conformance and
+        # DELIBERATELY IGNORED — the mock never emits tool_use, so keeping CI
+        # deterministic and every existing stream test byte-for-byte identical
+        # is the point of this no-op.
+        del tools, tool_executor
         text = f"(mock) {_last_user_content(messages)}"
         # Word-chunk deltas — first word carries no leading space, rest prepend one.
         for i, word in enumerate(text.split(" ")):

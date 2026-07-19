@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
 
@@ -24,10 +25,15 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
-from app.ai.tools import build_request_tool_registry
+from app.ai.tools import (
+    build_request_tool_registry,
+    build_streaming_request_tool_registry,
+)
+from app.ai.tools.search_memory import MemoryRepoFactory
 from app.application.ports.chat import ChatMessage, ChatProvider
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.memory_extraction import MemoryExtractor
+from app.application.ports.repositories import MemoryRepositoryPort
 from app.infrastructure.db import Database
 from app.infrastructure.db.repositories import (
     ConversationRepository,
@@ -331,6 +337,30 @@ async def chat(
     )
 
 
+def _make_streaming_memory_repo_factory(db: Database, *, tenant_id: UUID) -> MemoryRepoFactory:
+    """Factory that opens a SHORT-lived tenant session per tool call.
+
+    The streaming path deliberately avoids holding a pooled DB connection for
+    the multi-second LLM response. This factory therefore opens a fresh
+    session, sets `app.current_tenant` inside the transaction, yields a
+    MemoryRepository, and closes on exit — one session PER search_memory
+    call, mirroring the 5d retrieval session's discipline. No session is
+    ever bound across the stream.
+    """
+
+    @asynccontextmanager
+    async def _factory() -> AsyncIterator[MemoryRepositoryPort]:
+        async with db.sessionmaker() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.current_tenant', :t, true)").bindparams(
+                    t=str(tenant_id)
+                )
+            )
+            yield MemoryRepository(session)
+
+    return _factory
+
+
 # --- streaming --------------------------------------------------------------
 
 _PROVIDER_ERROR_CODES: dict[type[Exception], str] = {
@@ -457,6 +487,27 @@ async def chat_stream(
         )
     augmented = _augment_messages(body.messages, memory_context)
 
+    # Tools: build a per-request STREAMING registry. search_memory binds to a
+    # SHORT-per-call session factory (never holds a session across the LLM
+    # stream). Retrieval/persist txns above/below remain the sole DB sessions
+    # bookending this request; tool-driven DB access is entirely per-call.
+    # tools_enabled=false → provider gets tools=None (kill switch gates the
+    # stream path too).
+    tools: list[dict[str, object]] | None = None
+    tool_executor = None
+    if settings.tools_enabled:
+        streaming_registry = build_streaming_request_tool_registry(
+            settings=settings,
+            memory_repo_factory=_make_streaming_memory_repo_factory(db, tenant_id=tenant_id),
+            embedding_provider=embedding_provider,
+            organization_id=tenant_id,
+            user_id=user.id,
+        )
+        specs = streaming_registry.specs()
+        if specs:
+            tools = specs
+            tool_executor = streaming_registry.execute
+
     async def _generator() -> AsyncIterator[bytes]:
         # Leading endpoint meta frame — raw dict via json.dumps (same shape
         # as the terminal error frame). NOT a provider ChatStreamEvent so the
@@ -469,7 +520,11 @@ async def chat_stream(
         done_finish_reason: str | None = None
 
         try:
-            async for event in provider.stream(messages=augmented):
+            async for event in provider.stream(
+                messages=augmented,
+                tools=tools,
+                tool_executor=tool_executor,
+            ):
                 yield f"data: {event.model_dump_json()}\n\n".encode()
                 if event.type == "delta":
                     accumulated.append(event.content)

@@ -212,26 +212,107 @@ class AnthropicProvider:
         self,
         *,
         messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: ToolExecutor | None = None,
         model: str | None = None,
         temperature: float = 0.7,
     ) -> AsyncIterator[ChatStreamEvent]:
-        kwargs = self._prepare_kwargs(messages, model, temperature)
-        try:
-            async with self._client.messages.stream(**kwargs) as s:
-                async for text_delta in s.text_stream:
-                    yield ChatStreamEvent(type="delta", content=text_delta)
-                final = await s.get_final_message()
-        except _SDK_EXCEPTIONS as e:
-            raise self._translate(e) from e
+        kwargs = self._prepare_kwargs(messages, model, temperature, tools=tools)
 
+        # No tool loop → 3a behavior verbatim: stream deltas LIVE from the SDK.
+        if tools is None or tool_executor is None:
+            try:
+                async with self._client.messages.stream(**kwargs) as s:
+                    async for text_delta in s.text_stream:
+                        yield ChatStreamEvent(type="delta", content=text_delta)
+                    final = await s.get_final_message()
+            except _SDK_EXCEPTIONS as e:
+                raise self._translate(e) from e
+
+            yield ChatStreamEvent(
+                type="done",
+                model=final.model,
+                usage=ChatUsage(
+                    prompt_tokens=final.usage.input_tokens,
+                    completion_tokens=final.usage.output_tokens,
+                ),
+                finish_reason=final.stop_reason or "stop",
+            )
+            return
+
+        # Tool-loop path. Per turn: fully consume the SDK stream into a
+        # per-turn text buffer WITHOUT emitting deltas — we can't know until
+        # stop_reason arrives whether this is an intermediate tool_use turn
+        # (suppress) or the final answer (emit). Only the FINAL turn's
+        # buffered text is emitted as delta events; intermediate turns are
+        # silent this slice ("Neo is searching…" status frame → 6e).
+        # `api_messages` is the same list the SDK reads on every iteration;
+        # appending grows the conversation in place.
+        api_messages: list[dict[str, Any]] = kwargs["messages"]
+        last_final: Any = None
+
+        for _ in range(self._max_tool_iterations + 1):
+            turn_deltas: list[str] = []
+            try:
+                async with self._client.messages.stream(**kwargs) as s:
+                    async for text_delta in s.text_stream:
+                        turn_deltas.append(text_delta)
+                    final = await s.get_final_message()
+            except _SDK_EXCEPTIONS as e:
+                raise self._translate(e) from e
+
+            last_final = final
+            stop_reason = getattr(final, "stop_reason", None) or "stop"
+
+            if stop_reason != "tool_use":
+                for chunk in turn_deltas:
+                    yield ChatStreamEvent(type="delta", content=chunk)
+                yield ChatStreamEvent(
+                    type="done",
+                    model=final.model,
+                    usage=ChatUsage(
+                        prompt_tokens=final.usage.input_tokens,
+                        completion_tokens=final.usage.output_tokens,
+                    ),
+                    finish_reason=stop_reason,
+                )
+                return
+
+            # tool_use turn — run every tool_use block, collect tool_result blocks.
+            tool_result_blocks: list[dict[str, Any]] = []
+            for block in final.content:
+                if getattr(block, "type", None) != "tool_use":
+                    continue
+                call = ToolCall(
+                    id=getattr(block, "id", ""),
+                    name=getattr(block, "name", ""),
+                    arguments=getattr(block, "input", {}) or {},
+                )
+                result = await tool_executor(call)
+                tr: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": result.tool_call_id,
+                    "content": result.content,
+                }
+                if result.is_error:
+                    tr["is_error"] = True
+                tool_result_blocks.append(tr)
+
+            assistant_content = [self._serialize_block(b) for b in final.content]
+            api_messages.append({"role": "assistant", "content": assistant_content})
+            api_messages.append({"role": "user", "content": tool_result_blocks})
+
+        # Fell off the loop — every iteration was tool_use. Emit a terminal
+        # done with the cap flag; no infinite streams, no more SDK calls.
+        assert last_final is not None
         yield ChatStreamEvent(
             type="done",
-            model=final.model,
+            model=last_final.model,
             usage=ChatUsage(
-                prompt_tokens=final.usage.input_tokens,
-                completion_tokens=final.usage.output_tokens,
+                prompt_tokens=last_final.usage.input_tokens,
+                completion_tokens=last_final.usage.output_tokens,
             ),
-            finish_reason=final.stop_reason or "stop",
+            finish_reason="max_tool_iterations",
         )
 
     async def close(self) -> None:

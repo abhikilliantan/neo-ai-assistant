@@ -84,6 +84,17 @@ class ChatProvider(Protocol):
         self,
         *,
         messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: ToolExecutor | None = None,
         model: str | None = None,
         temperature: float = 0.7,
-    ) -> AsyncIterator[ChatStreamEvent]: ...
+    ) -> AsyncIterator[ChatStreamEvent]:
+        """When `tools` is given, the provider runs the tool-use loop
+        internally across streamed turns: intermediate `tool_use` responses
+        do NOT emit delta events (their text is suppressed this slice);
+        the executor runs; the next turn is streamed. Only the FINAL answer
+        turn emits `delta` events to the client. The terminal `done` event
+        carries the final usage/finish_reason ("max_tool_iterations" if the
+        cap is hit). The frame contract (delta / done) is unchanged.
+        """
+        ...
