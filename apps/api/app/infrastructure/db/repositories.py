@@ -21,7 +21,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.db.models import (
+    Conversation,
     Membership,
+    Message,
     Organization,
     Role,
     Session,
@@ -72,6 +74,96 @@ class SessionRepository:
         if s is not None and s.revoked_at is None:
             s.revoked_at = datetime.now(UTC)
             await self.session.flush()
+
+
+class ConversationRepository:
+    """Tenant-scoped. RLS filters organization_id at the DB layer, but every
+    method still takes organization_id explicitly so the app-layer intent is
+    audit-visible.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        title: str | None = None,
+    ) -> Conversation:
+        c = Conversation(organization_id=organization_id, user_id=user_id, title=title)
+        self.session.add(c)
+        await self.session.flush()
+        return c
+
+    async def get_by_id(self, conversation_id: UUID) -> Conversation | None:
+        return await self.session.get(Conversation, conversation_id)
+
+    async def list_for_org(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[Conversation]:
+        stmt = select(Conversation).where(Conversation.organization_id == organization_id)
+        if active_only:
+            stmt = stmt.where(Conversation.deleted_at.is_(None))
+        stmt = stmt.order_by(
+            Conversation.last_message_at.desc().nullslast(),
+            Conversation.created_at.desc(),
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def touch(self, conversation_id: UUID) -> None:
+        c = await self.session.get(Conversation, conversation_id)
+        if c is None:
+            return
+        c.last_message_at = datetime.now(UTC)
+        await self.session.flush()
+
+
+class MessageRepository:
+    """Tenant-scoped append-only log. Callers must pass organization_id
+    matching the parent conversation — WITH CHECK enforces the same on write.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def add(
+        self,
+        *,
+        organization_id: UUID,
+        conversation_id: UUID,
+        role: str,
+        content: str,
+        model: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        finish_reason: str | None = None,
+    ) -> Message:
+        m = Message(
+            organization_id=organization_id,
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            finish_reason=finish_reason,
+        )
+        self.session.add(m)
+        await self.session.flush()
+        return m
+
+    async def list_for_conversation(self, conversation_id: UUID) -> list[Message]:
+        # id.asc() is a final tiebreaker for the astronomically-unlikely
+        # clock_timestamp() tie; the (conversation_id, created_at) index
+        # still drives the sort.
+        stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.asc(), Message.id.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
 
 # --- system-role (neo) repository --------------------------------------------

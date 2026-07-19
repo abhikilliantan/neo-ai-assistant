@@ -7,7 +7,14 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from app.infrastructure.db.models import Membership, Organization, Session, User
+    from app.infrastructure.db.models import (
+        Conversation,
+        Membership,
+        Message,
+        Organization,
+        Session,
+        User,
+    )
 
 
 class UserRepositoryPort(Protocol):
@@ -43,3 +50,37 @@ class SystemRepositoryPort(Protocol):
         org_name: str,
         role_name: str = "owner",
     ) -> tuple[User, Organization, Membership]: ...
+
+
+# --- chat persistence (tenant-scoped, RLS-enforced) --------------------------
+
+
+class ConversationRepositoryPort(Protocol):
+    async def create(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        title: str | None = None,
+    ) -> Conversation: ...
+    async def get_by_id(self, conversation_id: UUID) -> Conversation | None: ...
+    async def list_for_org(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[Conversation]: ...
+    async def touch(self, conversation_id: UUID) -> None: ...
+
+
+class MessageRepositoryPort(Protocol):
+    async def add(
+        self,
+        *,
+        organization_id: UUID,
+        conversation_id: UUID,
+        role: str,
+        content: str,
+        model: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        finish_reason: str | None = None,
+    ) -> Message: ...
+    async def list_for_conversation(self, conversation_id: UUID) -> list[Message]: ...
