@@ -251,6 +251,11 @@ class MemoryRepository:
         stmt = stmt.order_by(Memory.created_at.desc())
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def get_by_id(self, memory_id: UUID) -> Memory | None:
+        # RLS filters cross-tenant on read; the endpoint layer still checks
+        # user_id ownership so same-tenant users can't touch each other's rows.
+        return await self.session.get(Memory, memory_id)
+
     async def soft_delete(self, memory_id: UUID) -> None:
         m = await self.session.get(Memory, memory_id)
         if m is None or m.deleted_at is not None:
