@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 from app.application.ports.chat import (
     ChatCompletion,
     ChatMessage,
     ChatStreamEvent,
+    ToolExecutor,
 )
 
 
@@ -24,9 +26,15 @@ class MockProvider:
         self,
         *,
         messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: ToolExecutor | None = None,
         model: str | None = None,
         temperature: float = 0.7,
     ) -> ChatCompletion:
+        # Tools are accepted for Protocol conformance and DELIBERATELY IGNORED.
+        # The mock never emits tool_use, so keeping CI deterministic and every
+        # existing test byte-for-byte identical is the point of this no-op.
+        del tools, tool_executor
         await asyncio.sleep(0)  # keep async boundary honest
         return ChatCompletion(
             content=f"(mock) {_last_user_content(messages)}",

@@ -26,7 +26,9 @@ from app.application.ports.chat import (
     ChatMessage,
     ChatStreamEvent,
     ChatUsage,
+    ToolExecutor,
 )
+from app.application.ports.tools import ToolCall
 from app.shared.exceptions.ai import (
     ProviderAPIError,
     ProviderAuthError,
@@ -45,6 +47,9 @@ _SDK_EXCEPTIONS: tuple[type[BaseException], ...] = (
 )
 
 
+_DEFAULT_MAX_TOOL_ITERATIONS = 5
+
+
 class AnthropicProvider:
     def __init__(
         self,
@@ -52,16 +57,20 @@ class AnthropicProvider:
         client: AsyncAnthropic,
         model: str,
         max_tokens: int,
+        max_tool_iterations: int = _DEFAULT_MAX_TOOL_ITERATIONS,
     ) -> None:
         self._client = client
         self._model = model
         self._max_tokens = max_tokens
+        self._max_tool_iterations = max_tool_iterations
 
     def _prepare_kwargs(
         self,
         messages: list[ChatMessage],
         model: str | None,
         temperature: float,
+        *,
+        tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """System extraction + user/assistant mapping — shared by complete + stream.
 
@@ -84,6 +93,8 @@ class AnthropicProvider:
         }
         if system_parts:
             kwargs["system"] = "\n\n".join(system_parts)
+        if tools:
+            kwargs["tools"] = tools
         return kwargs
 
     @staticmethod
@@ -99,33 +110,103 @@ class AnthropicProvider:
             return ProviderAPIError(str(exc))
         return exc
 
-    async def complete(
-        self,
-        *,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float = 0.7,
-    ) -> ChatCompletion:
-        kwargs = self._prepare_kwargs(messages, model, temperature)
-        try:
-            response = await self._client.messages.create(**kwargs)
-        except _SDK_EXCEPTIONS as e:
-            raise self._translate(e) from e
-
-        text = "".join(
+    @staticmethod
+    def _text_from(response: Any) -> str:
+        return "".join(
             getattr(block, "text", "")
             for block in response.content
             if getattr(block, "type", None) == "text"
         )
+
+    @staticmethod
+    def _completion_from(response: Any, *, finish_reason: str) -> ChatCompletion:
         return ChatCompletion(
-            content=text,
+            content=AnthropicProvider._text_from(response),
             model=response.model,
             usage=ChatUsage(
                 prompt_tokens=response.usage.input_tokens,
                 completion_tokens=response.usage.output_tokens,
             ),
-            finish_reason=response.stop_reason or "stop",
+            finish_reason=finish_reason,
         )
+
+    @staticmethod
+    def _serialize_block(block: Any) -> dict[str, Any]:
+        """Turn an SDK content block back into a JSON-shaped dict for replay.
+
+        The next SDK call needs the assistant's full content list — including
+        any tool_use blocks — verbatim. Text and tool_use are the two shapes
+        Claude emits mid-turn; anything else best-efforts through model_dump.
+        """
+        t = getattr(block, "type", None)
+        if t == "text":
+            return {"type": "text", "text": getattr(block, "text", "")}
+        if t == "tool_use":
+            return {
+                "type": "tool_use",
+                "id": getattr(block, "id", ""),
+                "name": getattr(block, "name", ""),
+                "input": getattr(block, "input", {}) or {},
+            }
+        dump = getattr(block, "model_dump", None)
+        return dump() if callable(dump) else {"type": t or "unknown"}
+
+    async def complete(
+        self,
+        *,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: ToolExecutor | None = None,
+        model: str | None = None,
+        temperature: float = 0.7,
+    ) -> ChatCompletion:
+        kwargs = self._prepare_kwargs(messages, model, temperature, tools=tools)
+        # `api_messages` is the same list object the SDK will read on every
+        # iteration — appending to it grows the conversation in place.
+        api_messages: list[dict[str, Any]] = kwargs["messages"]
+
+        last_response: Any = None
+        for _ in range(self._max_tool_iterations + 1):
+            try:
+                response = await self._client.messages.create(**kwargs)
+            except _SDK_EXCEPTIONS as e:
+                raise self._translate(e) from e
+            last_response = response
+
+            stop_reason = getattr(response, "stop_reason", None) or "stop"
+            if stop_reason != "tool_use" or tool_executor is None:
+                return self._completion_from(response, finish_reason=stop_reason)
+
+            # Run every tool_use block in this response, collect tool_result blocks.
+            tool_result_blocks: list[dict[str, Any]] = []
+            for block in response.content:
+                if getattr(block, "type", None) != "tool_use":
+                    continue
+                call = ToolCall(
+                    id=getattr(block, "id", ""),
+                    name=getattr(block, "name", ""),
+                    arguments=getattr(block, "input", {}) or {},
+                )
+                result = await tool_executor(call)
+                tr: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": result.tool_call_id,
+                    "content": result.content,
+                }
+                if result.is_error:
+                    tr["is_error"] = True
+                tool_result_blocks.append(tr)
+
+            # Extend the conversation for the next SDK call: assistant's full
+            # content list (text + tool_use), then the user turn of results.
+            assistant_content = [self._serialize_block(b) for b in response.content]
+            api_messages.append({"role": "assistant", "content": assistant_content})
+            api_messages.append({"role": "user", "content": tool_result_blocks})
+
+        # Fell off the loop — every iteration was tool_use. Return the last
+        # response's text with the cap flag; no infinite loops, no more calls.
+        assert last_response is not None
+        return self._completion_from(last_response, finish_reason="max_tool_iterations")
 
     async def stream(
         self,

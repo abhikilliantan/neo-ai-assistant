@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     memory_retrieval_top_k: int = 5
     memory_retrieval_min_similarity: float = 0.7
 
+    # --- tools (phase 6b) ---
+    # Clean kill switch: when false, /chat passes tools=None to the provider —
+    # the tool-use loop never engages. Provider stays wired; only the specs
+    # + executor are withheld.
+    tools_enabled: bool = True
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]

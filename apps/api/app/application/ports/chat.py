@@ -15,10 +15,12 @@ stay simple; providers implement `stream()` only when they support it.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Literal, Protocol
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+from app.application.ports.tools import ToolCall, ToolResult
 
 ChatRole = Literal["system", "user", "assistant"]
 
@@ -56,14 +58,27 @@ class ChatStreamEvent(BaseModel):
     finish_reason: str | None = None
 
 
+ToolExecutor = Callable[[ToolCall], Awaitable[ToolResult]]
+
+
 class ChatProvider(Protocol):
     async def complete(
         self,
         *,
         messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: ToolExecutor | None = None,
         model: str | None = None,
         temperature: float = 0.7,
-    ) -> ChatCompletion: ...
+    ) -> ChatCompletion:
+        """When `tools` is given, the provider runs the tool-use loop
+        internally: any `tool_use` responses trigger `tool_executor(call)`,
+        the result is fed back to the model, and the loop continues until
+        the model produces a final text answer (or an iteration cap is hit).
+        The returned `ChatCompletion` carries only that final text — the
+        intermediate turns are ephemeral and never surface to the caller.
+        """
+        ...
 
     def stream(
         self,

@@ -42,6 +42,7 @@ from app.presentation.http.deps import (
     SettingsDep,
     StreamingCurrentUserDep,
     TenantSessionDep,
+    ToolRegistryDep,
     get_app_database,
     get_embedding_provider,
     get_memory_extractor,
@@ -226,6 +227,7 @@ async def chat(
     provider: ProviderDep,
     embedding_provider: EmbeddingProviderDep,
     memory_extractor: MemoryExtractorDep,
+    tool_registry: ToolRegistryDep,
     settings: SettingsDep,
     db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
@@ -269,7 +271,23 @@ async def chat(
         )
     augmented = _augment_messages(body.messages, memory_context)
 
-    completion = await provider.complete(messages=augmented)
+    # Tools: when enabled and the registry has any, hand the provider the
+    # specs + a bound executor. The tool-use loop then lives INSIDE the
+    # provider — the intermediate tool_use/tool_result turns are ephemeral
+    # and never surface to persistence (only completion.content does).
+    tools = None
+    tool_executor = None
+    if settings.tools_enabled:
+        specs = tool_registry.specs()
+        if specs:
+            tools = specs
+            tool_executor = tool_registry.execute
+
+    completion = await provider.complete(
+        messages=augmented,
+        tools=tools,
+        tool_executor=tool_executor,
+    )
 
     prompt_tokens, completion_tokens = _usage_tokens(completion.usage)
     await msg_repo.add(

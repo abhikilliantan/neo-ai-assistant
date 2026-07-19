@@ -37,9 +37,14 @@ class _RecordingProvider:
         self,
         *,
         messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: Any = None,
         model: str | None = None,
         temperature: float = 0.7,
     ) -> ChatCompletion:
+        # 6b widened the ChatProvider port; this recording double accepts the
+        # extra kwargs to stay Protocol-conformant. Behavior unchanged.
+        del tools, tool_executor
         self.complete_calls.append(list(messages))
         return await self._inner.complete(messages=messages, model=model, temperature=temperature)
 
