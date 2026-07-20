@@ -127,6 +127,14 @@ export type ConversationDetail = ConversationSummary & {
   messages: ConversationMessage[];
 };
 
+// --- agents (mirrors backend AgentOut whitelist: name + description only) ---
+// system_prompt and tool_names are internal on the backend and MUST NOT
+// appear here — same whitelist discipline as Memory omitting the embedding.
+export type Agent = {
+  name: string;
+  description: string;
+};
+
 // --- memory & preferences (mirrors backend /api/v1/memories + /preferences) ---
 export type Memory = {
   id: string;

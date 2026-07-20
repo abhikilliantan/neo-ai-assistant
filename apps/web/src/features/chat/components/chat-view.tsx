@@ -1,24 +1,30 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessage, ToolInvocation } from "@neo/shared-types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Agent, ChatMessage, ToolInvocation } from "@neo/shared-types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
+import { listAgents } from "@/services/agents";
 import { streamChat } from "@/services/chat";
 import { getConversation } from "@/services/conversations";
 import { ConversationSidebar } from "@/features/chat/components/conversation-sidebar";
 import { ToolChip } from "@/features/chat/components/tool-chip";
 
-// Session-only extension of shared-types ChatMessage. `toolInvocations` is
-// LIVE UI state — populated from SSE "tool" frames during a stream and
-// dropped on reload. It is NEVER sent back to /chat/stream (the request
-// body still uses the plain {role, content} shape) and NEVER surfaces on
-// history from /conversations/{id} — that's correct and matches 6e-1's
-// ephemeral guarantee.
-type UiMessage = ChatMessage & { toolInvocations?: ToolInvocation[] };
+// Session-only extension of shared-types ChatMessage. Both `toolInvocations`
+// (6e-1) and `agent` (6i-1) are LIVE UI state — populated from SSE frames
+// during a stream and dropped on reload. They are NEVER sent back to
+// /chat/stream (the request body still uses the plain {role, content}
+// shape) and NEVER surface on history from /conversations/{id} — matches
+// the ephemeral guarantees of both slices.
+type UiMessage = ChatMessage & { toolInvocations?: ToolInvocation[]; agent?: string };
+
+const DEFAULT_AGENT: Agent = {
+  name: "assistant",
+  description: "General-purpose Neo assistant.",
+};
 
 export function ChatView() {
   const queryClient = useQueryClient();
@@ -29,6 +35,21 @@ export function ChatView() {
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Session-level agent selection (6i-2). NOT per-conversation — selection
+  // is per-request until 6j adds persistence. Default matches the backend's
+  // DEFAULT_AGENT_NAME so a fresh page load sends no `agent` key on the wire.
+  const [selectedAgent, setSelectedAgent] = useState<string>(DEFAULT_AGENT.name);
+
+  // The picker must NEVER break chat: if /agents fails or returns [],
+  // we fall back to a single implicit "assistant" entry so the picker
+  // still renders one option and streaming proceeds normally.
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
+  const agents: Agent[] = useMemo(() => {
+    const list = agentsQuery.data;
+    return list && list.length > 0 ? list : [DEFAULT_AGENT];
+  }, [agentsQuery.data]);
+  const selectedAgentMeta =
+    agents.find((a) => a.name === selectedAgent) ?? agents[0] ?? DEFAULT_AGENT;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -96,10 +117,23 @@ export function ChatView() {
     void streamChat(requestHistory, {
       signal: controller.signal,
       conversationId: activeConversationId ?? undefined,
-      onMeta: (cid) => {
-        // First message in a brand-new conversation: adopt the server-assigned id
-        // so subsequent sends thread into the same conversation.
-        setActiveConversationId((prev) => prev ?? cid);
+      // Omit `agent` on the default so the wire is byte-identical to pre-6h;
+      // send the explicit name otherwise so the backend resolves it directly.
+      agent: selectedAgent !== DEFAULT_AGENT.name ? selectedAgent : undefined,
+      onMeta: ({ conversation_id, agent }) => {
+        // First message in a brand-new conversation: adopt the server-assigned
+        // id so subsequent sends thread into the same conversation.
+        setActiveConversationId((prev) => prev ?? conversation_id);
+        // Meta arrives BEFORE the first delta, so tagging the pending
+        // assistant message here makes the label visible from stream start.
+        setMessages((prev) => {
+          const next = prev.slice();
+          const last = next[next.length - 1];
+          if (last?.role === "assistant") {
+            next[next.length - 1] = { ...last, agent };
+          }
+          return next;
+        });
       },
       onDelta: (chunk) =>
         setMessages((prev) => {
@@ -167,6 +201,7 @@ export function ChatView() {
                     role={m.role}
                     content={m.content}
                     toolInvocations={m.toolInvocations}
+                    agent={m.agent}
                     pending={
                       streaming &&
                       i === messages.length - 1 &&
@@ -185,6 +220,33 @@ export function ChatView() {
             {error}
           </p>
         )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="agent-picker" className="text-xs text-muted-foreground">
+            Agent
+          </label>
+          <select
+            id="agent-picker"
+            value={selectedAgent}
+            onChange={(e) => setSelectedAgent(e.target.value)}
+            // Locked during streaming — switching mid-stream would make the
+            // meta.agent label ambiguous about which agent produced the text
+            // on screen. Also disabled while loading historical messages.
+            disabled={streaming || loadingHistory}
+            className={cn(
+              "rounded-md border bg-background px-2 py-1 text-sm",
+              "focus:outline-none focus:ring-2 focus:ring-ring",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+            )}
+          >
+            {agents.map((a) => (
+              <option key={a.name} value={a.name}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-muted-foreground">{selectedAgentMeta.description}</span>
+        </div>
 
         <form className="flex gap-2" onSubmit={onSend}>
           <Input
@@ -207,18 +269,34 @@ function MessageBubble({
   role,
   content,
   toolInvocations,
+  agent,
   pending,
 }: {
   role: ChatMessage["role"];
   content: string;
   toolInvocations?: ToolInvocation[];
+  agent?: string;
   pending?: boolean;
 }) {
   const isUser = role === "user";
   const chips = !isUser && toolInvocations && toolInvocations.length > 0;
+  // Agent label is LIVE-only: only present on assistant messages that came
+  // from the current session's stream (meta frame). History reload doesn't
+  // set it, so reloaded messages render with no label. Rendered ABOVE the
+  // tool chips: reading order is "which agent → what it did → answer".
+  // Visually subordinate to chips (no border/pill, muted, small).
+  const agentLabel = !isUser && agent;
   return (
     <li className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div className="flex max-w-[75%] flex-col items-start gap-1">
+        {agentLabel && (
+          <span
+            className="text-[10px] uppercase tracking-wide text-muted-foreground"
+            aria-label={`Agent: ${agent}`}
+          >
+            {agent}
+          </span>
+        )}
         {chips && (
           <div className="flex flex-wrap gap-1" aria-label="Tools Neo used">
             {toolInvocations.map((t, i) => (

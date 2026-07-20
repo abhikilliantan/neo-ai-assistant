@@ -17,7 +17,10 @@ export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
 }
 
 export type StreamCallbacks = {
-  onMeta?: (conversationId: string) => void;
+  // Meta frame arrives first — carries the server-assigned conversation id
+  // and the RESOLVED agent name (6i-1). The caller uses `agent` to render
+  // a live label; it is NOT persisted.
+  onMeta?: (meta: { conversation_id: string; agent: string }) => void;
   onDelta: (content: string) => void;
   // Live "Neo used X" signal (6e-1). Fires once per tool the backend ran
   // mid-turn, BEFORE the final delta frames. Session-only — the caller
@@ -27,6 +30,9 @@ export type StreamCallbacks = {
   onError: (err: Omit<ChatStreamError, "type">) => void;
   signal?: AbortSignal;
   conversationId?: string;
+  // Optional agent selection (6i-2). Undefined → wire byte-identical to
+  // pre-6h (no `agent` key). Backend resolves absent/null → "assistant".
+  agent?: string;
 };
 
 // Fetch-based streaming client. Axios can't read a chunked response body in
@@ -35,12 +41,16 @@ export type StreamCallbacks = {
 // axios interceptor uses (see services/session-refresh.ts) and retry once.
 export async function streamChat(
   messages: ChatMessage[],
-  { onMeta, onDelta, onTool, onDone, onError, signal, conversationId }: StreamCallbacks,
+  { onMeta, onDelta, onTool, onDone, onError, signal, conversationId, agent }: StreamCallbacks,
 ): Promise<void> {
   const url = `${env.apiUrl}/api/v1/chat/stream`;
-  const body = JSON.stringify(
-    conversationId ? { messages, conversation_id: conversationId } : { messages },
-  );
+  // Build the body dynamically so `agent` / `conversation_id` are OMITTED
+  // (not sent as null / undefined) when not set — keeps the default path's
+  // wire shape byte-identical to pre-6h.
+  const payload: Record<string, unknown> = { messages };
+  if (conversationId) payload.conversation_id = conversationId;
+  if (agent) payload.agent = agent;
+  const body = JSON.stringify(payload);
 
   const doFetch = (token: string | null): Promise<Response> =>
     fetch(url, {
@@ -102,7 +112,8 @@ export async function streamChat(
         buffer = buffer.slice(sep + 2);
         const event = parseSseFrame(raw);
         if (!event) continue;
-        if (event.type === "meta") onMeta?.(event.conversation_id);
+        if (event.type === "meta")
+          onMeta?.({ conversation_id: event.conversation_id, agent: event.agent });
         else if (event.type === "delta") onDelta(event.content);
         else if (event.type === "tool")
           onTool?.({ tool_name: event.tool_name, tool_ok: event.tool_ok });
