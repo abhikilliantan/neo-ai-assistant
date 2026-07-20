@@ -22,9 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.agents import AgentRegistry
 from app.ai.tools import ToolRegistry
+from app.ai.workflows import WorkflowRegistry
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
 from app.application.ports.memory_extraction import MemoryExtractor
+from app.application.ports.workflows import WorkflowClient
 from app.infrastructure.config import Settings
 from app.infrastructure.db import Database
 from app.infrastructure.db.models import User
@@ -86,6 +88,22 @@ def get_agent_registry(request: Request) -> AgentRegistry:
     return request.app.state.agent_registry  # type: ignore[no-any-return]
 
 
+def get_workflow_client(request: Request) -> WorkflowClient:
+    """Built once in the lifespan. NO route consumes this yet — 7a is the
+    contract/registry/mock slice; 7b wires workflows into the tool loop
+    (WORKFLOWS ARE TOOLS). Present here so 7b is a pure route-level change
+    (same shape as get_tool_registry / get_agent_registry).
+    """
+    return request.app.state.workflow_client  # type: ignore[no-any-return]
+
+
+def get_workflow_registry(request: Request) -> WorkflowRegistry:
+    """Built once in the lifespan. NO route consumes this yet — 7b wires it
+    into the chat path. Present here so 7b is a pure route-level change.
+    """
+    return request.app.state.workflow_registry  # type: ignore[no-any-return]
+
+
 def get_app_settings(request: Request) -> Settings:
     """Read the Settings instance built in create_app / lifespan.
 
@@ -126,6 +144,8 @@ EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provid
 MemoryExtractorDep = Annotated[MemoryExtractor, Depends(get_memory_extractor)]
 ToolRegistryDep = Annotated[ToolRegistry, Depends(get_tool_registry)]
 AgentRegistryDep = Annotated[AgentRegistry, Depends(get_agent_registry)]
+WorkflowClientDep = Annotated[WorkflowClient, Depends(get_workflow_client)]
+WorkflowRegistryDep = Annotated[WorkflowRegistry, Depends(get_workflow_registry)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 

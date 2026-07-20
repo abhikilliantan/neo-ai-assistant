@@ -239,6 +239,7 @@ async def db_app(
     from app.ai.providers.embeddings.mock import MockEmbeddingProvider
     from app.ai.providers.mock import MockProvider
     from app.ai.tools import build_tool_registry
+    from app.ai.workflows import MockWorkflowClient, build_workflow_registry
 
     settings = Settings(
         python_env="test",
@@ -267,6 +268,11 @@ async def db_app(
     app.state.memory_extractor = MockMemoryExtractor()
     app.state.tool_registry = build_tool_registry(settings)
     app.state.agent_registry = build_agent_registry(settings)
+    # 7a: pin the mock workflow client + registry — the CI/test default, same
+    # posture as the mock chat/embedding providers above. No route consumes
+    # them yet (7b wires workflows into the tool loop).
+    app.state.workflow_client = MockWorkflowClient()
+    app.state.workflow_registry = build_workflow_registry(settings)
     yield app
 
 

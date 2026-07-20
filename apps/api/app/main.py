@@ -15,6 +15,7 @@ from app.ai.extractors import build_memory_extractor
 from app.ai.providers import build_chat_provider
 from app.ai.providers.embeddings import build_embedding_provider
 from app.ai.tools import build_tool_registry
+from app.ai.workflows import build_workflow_client, build_workflow_registry
 from app.application.ports.health import HealthCheck
 from app.core.exceptions import register_exception_handlers
 from app.core.middleware import RequestContextMiddleware
@@ -46,6 +47,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     memory_extractor = build_memory_extractor(settings, chat_provider)
     tool_registry = build_tool_registry(settings)
     agent_registry = build_agent_registry(settings)
+    workflow_client = build_workflow_client(settings)  # fail-fast if misconfigured
+    workflow_registry = build_workflow_registry(settings)
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
@@ -59,6 +62,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory_extractor = memory_extractor
     app.state.tool_registry = tool_registry
     app.state.agent_registry = agent_registry
+    app.state.workflow_client = workflow_client
+    app.state.workflow_registry = workflow_registry
     app.state.health_checks = checks
     log.info(
         "startup",
@@ -69,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         memory_extractor=settings.memory_extractor,
         tools=",".join(t["name"] for t in tool_registry.specs()),
         agents=",".join(agent_registry.list_names()),
+        workflows=",".join(workflow_registry.list_names()),
     )
 
     try:

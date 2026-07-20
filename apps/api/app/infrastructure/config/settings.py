@@ -93,6 +93,17 @@ class Settings(BaseSettings):
     # + executor are withheld.
     tools_enabled: bool = True
 
+    # --- workflows (phase 7a) ---
+    # `mock` is the CI/test default and needs no key. `n8n` is NOT implemented
+    # until 7c (build_workflow_client raises NotImplementedError). n8n webhook
+    # URLs + auth tokens are SECRETS — they live in .env, never in code, and
+    # their Settings fields arrive with the 7c client that reads them.
+    workflow_client: Literal["mock", "n8n"] = "mock"
+    # Kill switch mirroring tools_enabled. Inert in 7a — nothing consumes it
+    # yet; 7b uses it as a route-level gate (WORKFLOWS ARE TOOLS) exactly like
+    # tools_enabled gates the /chat tool loop.
+    workflows_enabled: bool = True
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
