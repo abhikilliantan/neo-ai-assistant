@@ -247,7 +247,12 @@ export function ChatView() {
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted-foreground">{selectedAgentMeta.description}</span>
+          {/* 7e: own full-width line so the operator agent's consent text
+              (now doing real permission work) reads cleanly, not cramped
+              beside the picker. */}
+          <span className="w-full text-xs text-muted-foreground">
+            {selectedAgentMeta.description}
+          </span>
         </div>
 
         <form className="flex gap-2" onSubmit={onSend}>
