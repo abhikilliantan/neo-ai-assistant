@@ -357,6 +357,7 @@ async def chat(
         model=completion.model,
         usage=completion.usage,
         tool_invocations=completion.tool_invocations,
+        agent=agent_name,
     )
 
 
@@ -554,7 +555,7 @@ async def chat_stream(
         # Leading endpoint meta frame — raw dict via json.dumps (same shape
         # as the terminal error frame). NOT a provider ChatStreamEvent so the
         # provider VO stays {delta, done} only.
-        yield _sse_frame({"type": "meta", "conversation_id": str(conv_id)})
+        yield _sse_frame({"type": "meta", "conversation_id": str(conv_id), "agent": agent_name})
 
         accumulated: list[str] = []
         done_model: str | None = None

@@ -85,12 +85,14 @@ export type ChatResponse = {
   usage: ChatUsage | null;
   // Additive default; omitted / empty array when no tools ran this turn.
   tool_invocations?: ToolInvocation[];
+  // Resolved agent name (6i-1). Always present; equals `body.agent or "assistant"`.
+  agent: string;
 };
 
 // SSE frames from POST /api/v1/chat/stream. Backend emits delta / done / tool
 // via the provider; error frames come from the endpoint when a provider
 // raises after headers were sent. Discriminate on `type`.
-export type ChatStreamMeta = { type: "meta"; conversation_id: string };
+export type ChatStreamMeta = { type: "meta"; conversation_id: string; agent: string };
 export type ChatStreamDelta = { type: "delta"; content: string };
 export type ChatStreamDone = {
   type: "done";

@@ -41,6 +41,10 @@ class ChatResponse(BaseModel):
     # response byte-for-byte identical. NEVER persisted; reloading the
     # conversation via GET /conversations/{id} shows only [user, assistant].
     tool_invocations: list[ToolInvocation] = Field(default_factory=list)
+    # Resolved agent name (6i-1). Always the name the server actually used:
+    # `body.agent or "assistant"`. Not persisted onto message rows this
+    # slice — per-conversation persistence lands in 6j.
+    agent: str
 
 
 class ConversationSummary(BaseModel):

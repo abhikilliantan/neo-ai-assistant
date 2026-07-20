@@ -452,3 +452,121 @@ async def test_list_agents_requires_bearer_token(db_client) -> None:  # type: ig
     r = await db_client.get("/api/v1/agents")
     assert r.status_code == 401
     assert r.json()["error"]["code"] == "authentication_failed"
+
+
+# --- Phase 6i-1: server echoes the resolved agent back to the client -------
+
+
+def _parse_sse(text: str) -> list[dict[str, Any]]:
+    """Local copy of the SSE frame parser used across the streaming tests."""
+    import json as _json
+
+    events: list[dict[str, Any]] = []
+    for chunk in text.split("\n\n"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        for line in chunk.split("\n"):
+            if line.startswith("data:"):
+                events.append(_json.loads(line[len("data:") :].strip()))
+    return events
+
+
+@pytest.mark.asyncio
+async def test_chat_response_echoes_default_agent_when_no_agent_field(db_client) -> None:  # type: ignore[no-untyped-def]
+    token = await _register_and_token(db_client, "echo-default@example.com")
+    r = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["agent"] == DEFAULT_AGENT_NAME  # "assistant"
+
+
+@pytest.mark.asyncio
+async def test_chat_response_echoes_selected_recall_agent(db_client) -> None:  # type: ignore[no-untyped-def]
+    token = await _register_and_token(db_client, "echo-recall@example.com")
+    r = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "agent": "recall",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["agent"] == "recall"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_meta_carries_default_agent_when_no_agent_field(  # type: ignore[no-untyped-def]
+    db_app,
+) -> None:
+    """Meta frame gains `agent`; delta / done stay clean (no agent field)."""
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "echo-stream-default@example.com")
+        r = await c.post(
+            "/api/v1/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+    assert r.status_code == 200
+    frames = _parse_sse(r.text)
+    assert frames[0]["type"] == "meta"
+    assert frames[0]["agent"] == DEFAULT_AGENT_NAME
+    assert frames[0]["conversation_id"]
+    # Delta + done frames must NOT carry an agent field — meta is the sole home.
+    for f in frames[1:]:
+        assert "agent" not in f
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_meta_carries_selected_recall_agent(db_app) -> None:  # type: ignore[no-untyped-def]
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "echo-stream-recall@example.com")
+        r = await c.post(
+            "/api/v1/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "agent": "recall",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert r.status_code == 200
+    frames = _parse_sse(r.text)
+    assert frames[0]["type"] == "meta"
+    assert frames[0]["agent"] == "recall"
+
+
+@pytest.mark.asyncio
+async def test_agent_choice_is_ephemeral_conversation_reload_carries_no_agent(  # type: ignore[no-untyped-def]
+    db_client,
+) -> None:
+    """After a turn with agent="recall", reloading the conversation via
+    GET /conversations/{id} must still show ONLY [user, assistant] with NO
+    agent field on any message row — persistence lands in 6j, not here.
+    """
+    token = await _register_and_token(db_client, "echo-ephemeral@example.com")
+    r = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "agent": "recall",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert r.status_code == 200
+    conv_id = r.json()["conversation_id"]
+
+    detail = await db_client.get(
+        f"/api/v1/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail.status_code == 200
+    msgs = detail.json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    for m in msgs:
+        assert "agent" not in m
