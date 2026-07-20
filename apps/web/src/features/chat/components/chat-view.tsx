@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessage } from "@neo/shared-types";
+import type { ChatMessage, ToolInvocation } from "@neo/shared-types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,12 +10,21 @@ import { cn } from "@/lib/cn";
 import { streamChat } from "@/services/chat";
 import { getConversation } from "@/services/conversations";
 import { ConversationSidebar } from "@/features/chat/components/conversation-sidebar";
+import { ToolChip } from "@/features/chat/components/tool-chip";
+
+// Session-only extension of shared-types ChatMessage. `toolInvocations` is
+// LIVE UI state — populated from SSE "tool" frames during a stream and
+// dropped on reload. It is NEVER sent back to /chat/stream (the request
+// body still uses the plain {role, content} shape) and NEVER surfaces on
+// history from /conversations/{id} — that's correct and matches 6e-1's
+// ephemeral guarantee.
+type UiMessage = ChatMessage & { toolInvocations?: ToolInvocation[] };
 
 export function ChatView() {
   const queryClient = useQueryClient();
 
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -73,14 +82,18 @@ export function ChatView() {
     setError(null);
     setDraft("");
 
-    const history: ChatMessage[] = [...messages, { role: "user", content: text }];
-    setMessages([...history, { role: "assistant", content: "" }]);
+    // Request body is the plain shared-types shape — toolInvocations is
+    // frontend-only state and MUST NOT be sent back to the backend.
+    const requestHistory: ChatMessage[] = messages
+      .map(({ role, content }) => ({ role, content }))
+      .concat({ role: "user", content: text });
+    setMessages([...messages, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setStreaming(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    void streamChat(history, {
+    void streamChat(requestHistory, {
       signal: controller.signal,
       conversationId: activeConversationId ?? undefined,
       onMeta: (cid) => {
@@ -94,6 +107,20 @@ export function ChatView() {
           const last = next[next.length - 1];
           if (last?.role === "assistant") {
             next[next.length - 1] = { ...last, content: last.content + chunk };
+          }
+          return next;
+        }),
+      onTool: ({ tool_name, tool_ok }) =>
+        setMessages((prev) => {
+          // Same immutable-update pattern as onDelta — append the invocation
+          // to the CURRENT in-flight assistant message's toolInvocations.
+          const next = prev.slice();
+          const last = next[next.length - 1];
+          if (last?.role === "assistant") {
+            next[next.length - 1] = {
+              ...last,
+              toolInvocations: [...(last.toolInvocations ?? []), { name: tool_name, ok: tool_ok }],
+            };
           }
           return next;
         }),
@@ -139,6 +166,7 @@ export function ChatView() {
                     key={i}
                     role={m.role}
                     content={m.content}
+                    toolInvocations={m.toolInvocations}
                     pending={
                       streaming &&
                       i === messages.length - 1 &&
@@ -178,23 +206,35 @@ export function ChatView() {
 function MessageBubble({
   role,
   content,
+  toolInvocations,
   pending,
 }: {
   role: ChatMessage["role"];
   content: string;
+  toolInvocations?: ToolInvocation[];
   pending?: boolean;
 }) {
   const isUser = role === "user";
+  const chips = !isUser && toolInvocations && toolInvocations.length > 0;
   return (
     <li className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "max-w-[75%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
-          isUser ? "bg-primary text-primary-foreground" : "bg-muted",
-          pending && "text-muted-foreground",
+      <div className="flex max-w-[75%] flex-col items-start gap-1">
+        {chips && (
+          <div className="flex flex-wrap gap-1" aria-label="Tools Neo used">
+            {toolInvocations.map((t, i) => (
+              <ToolChip key={i} invocation={t} />
+            ))}
+          </div>
         )}
-      >
-        {pending ? "Thinking…" : content}
+        <div
+          className={cn(
+            "whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
+            isUser ? "bg-primary text-primary-foreground" : "bg-muted",
+            pending && "text-muted-foreground",
+          )}
+        >
+          {pending ? "Thinking…" : content}
+        </div>
       </div>
     </li>
   );

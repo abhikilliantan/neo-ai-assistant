@@ -19,6 +19,10 @@ export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
 export type StreamCallbacks = {
   onMeta?: (conversationId: string) => void;
   onDelta: (content: string) => void;
+  // Live "Neo used X" signal (6e-1). Fires once per tool the backend ran
+  // mid-turn, BEFORE the final delta frames. Session-only — the caller
+  // renders a chip; nothing is sent back to the backend.
+  onTool?: (t: { tool_name: string; tool_ok: boolean }) => void;
   onDone: (info: Omit<ChatStreamDone, "type">) => void;
   onError: (err: Omit<ChatStreamError, "type">) => void;
   signal?: AbortSignal;
@@ -31,7 +35,7 @@ export type StreamCallbacks = {
 // axios interceptor uses (see services/session-refresh.ts) and retry once.
 export async function streamChat(
   messages: ChatMessage[],
-  { onMeta, onDelta, onDone, onError, signal, conversationId }: StreamCallbacks,
+  { onMeta, onDelta, onTool, onDone, onError, signal, conversationId }: StreamCallbacks,
 ): Promise<void> {
   const url = `${env.apiUrl}/api/v1/chat/stream`;
   const body = JSON.stringify(
@@ -100,6 +104,8 @@ export async function streamChat(
         if (!event) continue;
         if (event.type === "meta") onMeta?.(event.conversation_id);
         else if (event.type === "delta") onDelta(event.content);
+        else if (event.type === "tool")
+          onTool?.({ tool_name: event.tool_name, tool_ok: event.tool_ok });
         else if (event.type === "done") {
           onDone({ model: event.model, usage: event.usage, finish_reason: event.finish_reason });
           return;
