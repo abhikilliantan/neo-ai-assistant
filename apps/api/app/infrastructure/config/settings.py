@@ -88,9 +88,10 @@ class Settings(BaseSettings):
     memory_retrieval_min_similarity: float = 0.7
 
     # --- tools (phase 6b) ---
-    # Clean kill switch: when false, /chat passes tools=None to the provider —
-    # the tool-use loop never engages. Provider stays wired; only the specs
-    # + executor are withheld.
+    # Clean kill switch: when false, BOTH /chat and /chat/stream pass tools=None
+    # to the provider — the tool-use loop never engages on either path (stream
+    # runs the loop too since 6d). Provider stays wired; only the specs +
+    # executor are withheld.
     tools_enabled: bool = True
 
     # --- workflows (phase 7a) ---

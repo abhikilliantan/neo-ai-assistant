@@ -31,15 +31,47 @@ from uuid import UUID
 from app.ai.tools.echo import EchoTool
 from app.ai.tools.registry import ToolRegistry
 from app.ai.tools.search_memory import MemoryRepoFactory, SearchMemoryTool
+from app.ai.tools.workflow import WorkflowTool
+from app.ai.workflows.registry import WorkflowRegistry
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.repositories import MemoryRepositoryPort
 from app.application.ports.tools import Tool
+from app.application.ports.workflows import WorkflowClient
 from app.infrastructure.config import Settings
 
 
 def _stateless_tools() -> list[Tool]:
     """Tools with no per-caller state. Safe to share process-wide."""
     return [EchoTool()]
+
+
+def _merge_workflow_tools(
+    registry: ToolRegistry,
+    workflow_registry: WorkflowRegistry,
+    workflow_client: WorkflowClient,
+) -> None:
+    """Merge workflow definitions into `registry` as WorkflowTools (7b).
+
+    COLLISION CHECK (7a flag #1 — the important one). `ToolRegistry.register`
+    OVERWRITES silently, so a workflow whose name already exists as a tool
+    (e.g. a workflow named `search_memory`) would silently reroute the model.
+    We refuse: a name collision is a BUILD-TIME `ValueError`, raised here —
+    inside the per-request registry build, which every request runs BEFORE the
+    provider call — so it can never surface mid-conversation, and it fires
+    deterministically on the first request in any environment (incl. CI).
+
+    Chosen over namespace prefixes (`workflow__create_task`): prefixes leak
+    implementation structure into the prompt the model reads and degrade its
+    tool choice — tool names should read like capabilities, not plumbing.
+
+    Note: the per-request builder is the ONLY place tools and workflows fully
+    coexist (search_memory is added per request, not at startup), so it is the
+    only complete surface for this check.
+    """
+    for definition in workflow_registry.definitions():
+        if registry.get(definition.name) is not None:
+            raise ValueError(f"workflow name collides with an existing tool: {definition.name!r}")
+        registry.register(WorkflowTool(definition=definition, client=workflow_client))
 
 
 def build_tool_registry(settings: Settings) -> ToolRegistry:
@@ -88,17 +120,27 @@ def build_streaming_request_tool_registry(
     embedding_provider: EmbeddingProvider,
     organization_id: UUID,
     user_id: UUID,
+    workflow_registry: WorkflowRegistry,
+    workflow_client: WorkflowClient,
 ) -> ToolRegistry:
-    """Per-request registry (streaming /chat/stream): baseline + tools bound
-    to a SHORT-per-call session factory rather than a live request session.
+    """Per-request registry for BOTH /chat and /chat/stream: baseline + tools
+    bound to a SHORT-per-call session factory rather than a live request
+    session, plus workflows-as-tools (7b).
 
-    /chat/stream deliberately avoids holding a DB connection across the
-    LLM stream. search_memory therefore receives a factory that opens a
-    fresh tenant session per invocation (set GUC → search → close), so
-    tool-driven DB access remains RLS-scoped without pinning the pool for
-    the stream's whole duration.
+    Both endpoints avoid holding a DB connection across the LLM response.
+    search_memory therefore receives a factory that opens a fresh tenant
+    session per invocation (set GUC → search → close), so tool-driven DB
+    access remains RLS-scoped without pinning the pool.
+
+    Workflows (7b): when `settings.workflows_enabled` is true, every registered
+    WorkflowDefinition is merged in as a WorkflowTool via `_merge_workflow_
+    tools` (with its build-time collision check). When false, NO workflow specs
+    are added — the tool set is echo + search_memory only. The outer
+    `tools_enabled` switch is applied by the caller (both endpoints skip this
+    builder entirely when tools_enabled is false), so the two switches compose:
+    tools_enabled=false → no specs at all; workflows_enabled=false → tools but
+    no workflows.
     """
-    del settings
     registry = ToolRegistry()
     for tool in _stateless_tools():
         registry.register(tool)
@@ -110,6 +152,8 @@ def build_streaming_request_tool_registry(
             user_id=user_id,
         )
     )
+    if settings.workflows_enabled:
+        _merge_workflow_tools(registry, workflow_registry, workflow_client)
     return registry
 
 
@@ -118,6 +162,7 @@ __all__ = [
     "MemoryRepoFactory",
     "SearchMemoryTool",
     "ToolRegistry",
+    "WorkflowTool",
     "build_request_tool_registry",
     "build_streaming_request_tool_registry",
     "build_tool_registry",

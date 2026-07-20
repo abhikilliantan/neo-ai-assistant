@@ -49,6 +49,8 @@ from app.presentation.http.deps import (
     MemoryExtractorDep,
     SettingsDep,
     StreamingCurrentUserDep,
+    WorkflowClientDep,
+    WorkflowRegistryDep,
     get_app_database,
     get_embedding_provider,
     get_memory_extractor,
@@ -243,6 +245,8 @@ async def chat(
     memory_extractor: MemoryExtractorDep,
     settings: SettingsDep,
     agents: AgentRegistryDep,
+    workflow_registry: WorkflowRegistryDep,
+    workflow_client: WorkflowClientDep,
     background_tasks: BackgroundTasks,
     db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
@@ -318,9 +322,11 @@ async def chat(
 
     # Tools: 6k-2 — bind search_memory to the SHORT-per-call session factory
     # (same as /chat/stream) rather than a held request session, so NO DB
-    # connection is pinned across the provider call. The tool-use loop itself
-    # lives INSIDE the provider and is untouched; intermediate tool_use/
-    # tool_result turns stay ephemeral (only completion.content persists).
+    # connection is pinned across the provider call. 7b — workflows join the
+    # tool set here too (WORKFLOWS ARE TOOLS), gated by workflows_enabled inside
+    # the builder. The tool-use loop itself lives INSIDE the provider and is
+    # untouched; intermediate tool_use/tool_result turns stay ephemeral (only
+    # completion.content persists).
     tools: list[dict[str, Any]] | None = None
     tool_executor: ToolExecutor | None = None
     if settings.tools_enabled:
@@ -330,6 +336,8 @@ async def chat(
             embedding_provider=embedding_provider,
             organization_id=tenant_id,
             user_id=user.id,
+            workflow_registry=workflow_registry,
+            workflow_client=workflow_client,
         )
         specs = request_registry.specs()
         if specs:
@@ -522,6 +530,8 @@ async def chat_stream(
     memory_extractor: Annotated[MemoryExtractor, Depends(get_memory_extractor)],
     settings: SettingsDep,
     agents: AgentRegistryDep,
+    workflow_registry: WorkflowRegistryDep,
+    workflow_client: WorkflowClientDep,
     background_tasks: BackgroundTasks,
 ) -> StreamingResponse:
     if tenant_id is None:
@@ -589,8 +599,9 @@ async def chat_stream(
     # SHORT-per-call session factory (never holds a session across the LLM
     # stream). Retrieval/persist txns above/below remain the sole DB sessions
     # bookending this request; tool-driven DB access is entirely per-call.
-    # tools_enabled=false → provider gets tools=None (kill switch gates the
-    # stream path too).
+    # The stream path DOES run the tool loop (wired in 6d) — tools_enabled=false
+    # → provider gets tools=None on BOTH paths. 7b: workflows join the tool set
+    # here too, gated by workflows_enabled inside the builder.
     tools: list[dict[str, Any]] | None = None
     tool_executor: ToolExecutor | None = None
     if settings.tools_enabled:
@@ -600,6 +611,8 @@ async def chat_stream(
             embedding_provider=embedding_provider,
             organization_id=tenant_id,
             user_id=user.id,
+            workflow_registry=workflow_registry,
+            workflow_client=workflow_client,
         )
         specs = streaming_registry.specs()
         if specs:

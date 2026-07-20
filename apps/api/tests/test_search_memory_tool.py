@@ -367,10 +367,15 @@ async def test_chat_e2e_search_memory_surfaces_content_and_stays_ephemeral(
         assert msgs[0]["content"] == "what's my name?"
         assert "Priya" in msgs[1]["content"]
 
-    # Endpoint offered both stateless + request tools to the provider.
+    # Endpoint offered stateless + request tools + the workflow-as-tool.
+    # 7b merged create_task (pinned mock workflow registry) into the tool set.
     assert scripted.tools_seen
     assert scripted.tools_seen[-1] is not None
-    assert {s["name"] for s in scripted.tools_seen[-1]} == {"echo", "search_memory"}
+    assert {s["name"] for s in scripted.tools_seen[-1]} == {
+        "echo",
+        "search_memory",
+        "create_task",
+    }
 
 
 # --- tools_enabled=False still overrides the request registry ---------------
