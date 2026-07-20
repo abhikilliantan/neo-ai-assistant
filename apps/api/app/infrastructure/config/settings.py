@@ -95,15 +95,23 @@ class Settings(BaseSettings):
     tools_enabled: bool = True
 
     # --- workflows (phase 7a) ---
-    # `mock` is the CI/test default and needs no key. `n8n` is NOT implemented
-    # until 7c (build_workflow_client raises NotImplementedError). n8n webhook
-    # URLs + auth tokens are SECRETS — they live in .env, never in code, and
-    # their Settings fields arrive with the 7c client that reads them.
+    # `mock` is the CI/test default and needs no key. `n8n` (7c) calls real
+    # webhooks and requires N8N_BASE_URL + N8N_AUTH_TOKEN (below).
     workflow_client: Literal["mock", "n8n"] = "mock"
-    # Kill switch mirroring tools_enabled. Inert in 7a — nothing consumes it
-    # yet; 7b uses it as a route-level gate (WORKFLOWS ARE TOOLS) exactly like
-    # tools_enabled gates the /chat tool loop.
+    # Kill switch mirroring tools_enabled. 7b uses it as a route-level gate
+    # (WORKFLOWS ARE TOOLS) exactly like tools_enabled gates the tool loop.
     workflows_enabled: bool = True
+
+    # --- n8n workflow client (phase 7c) ---
+    # Read ONLY when WORKFLOW_CLIENT=n8n; build_workflow_client fails fast if
+    # base URL or token is missing. The webhook URL is derived by convention
+    # (base_url + "/webhook/" + workflow_name).
+    n8n_base_url: str = ""
+    # SECRET — .env only. NEVER logged, never put in an error/response string.
+    n8n_auth_token: str = ""
+    # HARD timeout. Load-bearing: the call runs inside the tool loop inside the
+    # live provider stream, so a hanging webhook would stall a watched response.
+    n8n_timeout_seconds: float = 10.0
 
     @property
     def cors_origins(self) -> list[str]:

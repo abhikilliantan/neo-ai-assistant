@@ -85,6 +85,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await chat_provider.close()
         if hasattr(embedding_provider, "close"):
             await embedding_provider.close()
+        # 7c: the n8n client holds a pooled httpx client; the mock has no close.
+        if hasattr(workflow_client, "close"):
+            await workflow_client.close()
         await redis.aclose()
         await database.dispose()
         await system_database.dispose()

@@ -163,11 +163,12 @@ def test_build_workflow_client_returns_mock_on_mock() -> None:
     assert isinstance(client, MockWorkflowClient)
 
 
-def test_build_workflow_client_raises_not_implemented_on_n8n() -> None:
-    """The n8n branch is deferred to 7c — it must RAISE, not stub a fake HTTP
-    call (no real network anywhere in 7a).
+def test_build_workflow_client_n8n_without_config_fails_fast() -> None:
+    """7c implemented the n8n branch; it no longer raises NotImplementedError.
+    Selecting n8n without its config fails fast with a RuntimeError rather than
+    silently falling back to mock. (Full n8n coverage: test_n8n_workflow_client.)
     """
-    with pytest.raises(NotImplementedError, match="7c"):
+    with pytest.raises(RuntimeError, match="N8N_BASE_URL"):
         build_workflow_client(_base(workflow_client="n8n"))
 
 

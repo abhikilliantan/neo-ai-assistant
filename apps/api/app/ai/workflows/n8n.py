@@ -1,0 +1,106 @@
+"""Real n8n webhook workflow client (Phase 7c) — the first Phase 7 code that
+touches the network.
+
+Implements the `WorkflowClient` port (`async run(*, name, arguments) ->
+WorkflowRun`) against n8n webhooks. CI/test default stays `MockWorkflowClient`;
+this client is only wired when WORKFLOW_CLIENT=n8n, and it is tested with an
+injected `httpx.MockTransport` — never a live URL.
+
+name -> URL: CONVENTION (7c). `base_url + "/webhook/" + name`, resolved in the
+single `_url_for` method. The port stays framework-free and URL-free (7a's
+decision); the only infra knob is `n8n_base_url`. 7f (tenant-defined workflows
+as DB rows) will REPLACE this: each row carries its own arbitrary URL, so
+`_url_for` becomes "read the row's URL" — and that URL is tenant-supplied, so
+it MUST be validated/allowlisted first (SSRF surface). Kept to one method so
+that migration is one edit.
+
+NO RETRIES. Webhooks are side-effecting and generally NOT idempotent — a retry
+of `create_task` silently creates two tasks. A timeout is the worst case: the
+workflow may have ALREADY run, so re-sending could double-fire. There is
+deliberately no retry here; do not add one casually. (A connect-only retry was
+considered and rejected: httpx does not cleanly guarantee "failed before any
+bytes were sent" across keep-alive connection reuse, so it is not provably
+side-effect-free.)
+
+SECURITY. The auth token lives ONLY as an `Authorization` header on the pooled
+client — it is never formatted into a URL, a log line, an exception, or any
+returned string. On EVERY failure path this client returns a curated STATUS
+MARKER (never the raw n8n response body): `tool.execute.failed` logs
+`error=str(e)` where `str(e)` is exactly this output (WorkflowTool raises
+`RuntimeError(run.output)` on ok=False), so the output must be log-safe. The
+raw body is discarded — unaudited n8n error bodies can carry customer data, and
+truncating them would reduce volume, not sensitivity. The status is enough for
+the model to recover (4xx → bad input, don't blind-retry; 5xx → backend/
+transient). On SUCCESS the output IS the (serialized) body — that goes to the
+model as ephemeral tool_result and is never logged.
+
+Lifecycle: ONE long-lived pooled `httpx.AsyncClient`, reused across calls to
+amortize TLS/connect on the latency path, closed via `close()` in the lifespan.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import httpx
+
+from app.application.ports.workflows import WorkflowRun
+
+
+def _serialize(response: httpx.Response) -> str:
+    """2xx body -> string. JSON is re-dumped with sorted keys for determinism;
+    anything else passes through as text.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text
+    return json.dumps(payload, sort_keys=True)
+
+
+class N8nWorkflowClient:
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        base_url: str,
+        timeout_seconds: float,
+    ) -> None:
+        self._client = client
+        self._base_url = base_url.rstrip("/")
+        self._timeout_seconds = timeout_seconds
+
+    def _url_for(self, name: str) -> str:
+        # 7c convention; 7f replaces this with a validated per-workflow URL.
+        return f"{self._base_url}/webhook/{name}"
+
+    async def run(self, *, name: str, arguments: dict[str, Any]) -> WorkflowRun:
+        try:
+            response = await self._client.post(self._url_for(name), json=arguments)
+        except httpx.TimeoutException:
+            # NO RETRY (see module docstring): a timed-out webhook may already
+            # have run. Curated marker only — no URL, token, or exception text.
+            return WorkflowRun(
+                ok=False,
+                output=f"workflow {name!r} timed out after {self._timeout_seconds}s",
+            )
+        except httpx.RequestError:
+            # Connect/network error. Still one attempt only. Curated marker.
+            return WorkflowRun(
+                ok=False,
+                output=f"workflow {name!r} could not reach the workflow backend",
+            )
+        if not response.is_success:
+            # Non-2xx -> ok=False with a STATUS MARKER. The raw body is
+            # DISCARDED: it is unaudited (customer data, stack traces) and this
+            # string is what tool.execute.failed logs. Status is enough for the
+            # model to recover.
+            return WorkflowRun(
+                ok=False,
+                output=f"workflow {name!r} failed with HTTP {response.status_code}",
+            )
+        return WorkflowRun(ok=True, output=_serialize(response))
+
+    async def close(self) -> None:
+        await self._client.aclose()

@@ -4,9 +4,8 @@ Mirrors `app/ai/providers/__init__.py` (build_chat_provider) and
 `app/ai/agents/__init__.py` (build_agent_registry):
 
   - `build_workflow_client(settings)` selects the concrete client from
-    `settings.workflow_client`. "mock" is the CI/test default; "n8n" RAISES
-    NotImplementedError this slice — 7c ships the real webhook client. We do
-    NOT stub a fake HTTP call (no real network anywhere in 7a).
+    `settings.workflow_client`. "mock" is the CI/test default; "n8n" (7c)
+    returns the real webhook client, failing fast if its config is missing.
   - `build_workflow_registry(settings)` pins the built-in workflow definitions
     onto a fresh registry at startup. `_built_in_workflows()` names the set in
     exactly one place.
@@ -17,7 +16,10 @@ Nothing consumes either of these yet — 7a is the contract/registry/mock slice;
 
 from __future__ import annotations
 
+import httpx
+
 from app.ai.workflows.mock import MockWorkflowClient
+from app.ai.workflows.n8n import N8nWorkflowClient
 from app.ai.workflows.registry import WorkflowRegistry
 from app.application.ports.workflows import WorkflowClient, WorkflowDefinition
 from app.infrastructure.config import Settings
@@ -66,8 +68,23 @@ def build_workflow_client(settings: Settings) -> WorkflowClient:
     if settings.workflow_client == "mock":
         return MockWorkflowClient()
     if settings.workflow_client == "n8n":
-        raise NotImplementedError(
-            "WORKFLOW_CLIENT=n8n is not implemented until 7c; use 'mock' for now"
+        # Fail fast on missing config — never silently fall back to mock, which
+        # would make a misconfigured prod look healthy. The message names the
+        # env vars, NEVER the token value.
+        if not settings.n8n_base_url or not settings.n8n_auth_token:
+            raise RuntimeError(
+                "WORKFLOW_CLIENT=n8n requires N8N_BASE_URL and N8N_AUTH_TOKEN to be set"
+            )
+        # ONE long-lived pooled client. The token lives ONLY as a default
+        # header here — never formatted into a URL, log, or returned string.
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.n8n_timeout_seconds),
+            headers={"Authorization": f"Bearer {settings.n8n_auth_token}"},
+        )
+        return N8nWorkflowClient(
+            client=http_client,
+            base_url=settings.n8n_base_url,
+            timeout_seconds=settings.n8n_timeout_seconds,
         )
     raise RuntimeError(f"Unknown WORKFLOW_CLIENT: {settings.workflow_client!r}")
 
@@ -89,6 +106,7 @@ def build_workflow_registry(settings: Settings) -> WorkflowRegistry:
 
 __all__ = [
     "MockWorkflowClient",
+    "N8nWorkflowClient",
     "WorkflowRegistry",
     "build_workflow_client",
     "build_workflow_registry",
