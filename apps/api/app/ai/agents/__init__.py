@@ -79,6 +79,32 @@ def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
     ]
 
 
+def agent_for_request(
+    agent: AgentDefinition,
+    *,
+    builtin_workflow_names: frozenset[str],
+    request_workflow_names: frozenset[str],
+) -> AgentDefinition:
+    """Expand a workflow-capable agent's allow-list with the PER-REQUEST
+    workflow names (built-in + this tenant's rows), so 7f-2's per-request specs
+    and per-request permissions stay in lockstep (7d built operator's list once
+    at startup — it flagged this itself).
+
+    An agent is "workflow-capable" iff it already permits the built-in
+    workflows — only `operator` does. Read-only agents (assistant, recall) are
+    returned UNCHANGED, so 7d's safety boundary holds for tenant rows too:
+    tenant data can never escalate a read-only agent into taking actions.
+    """
+    if agent.tool_names is None:
+        return agent
+    allowed = set(agent.tool_names)
+    # `builtin_workflow_names` non-empty guards the vacuous-subset case: with no
+    # built-in workflows, `<= allowed` would be true for every agent.
+    if builtin_workflow_names and builtin_workflow_names <= allowed:
+        return agent.model_copy(update={"tool_names": sorted(allowed | request_workflow_names)})
+    return agent
+
+
 def build_agent_registry(settings: Settings, *, workflow_names: Iterable[str]) -> AgentRegistry:
     """Startup registry — built once, pinned on `app.state.agent_registry`.
 
@@ -104,5 +130,6 @@ __all__ = [
     "DEFAULT_AGENT_NAME",
     "AgentRegistry",
     "AgentRunner",
+    "agent_for_request",
     "build_agent_registry",
 ]

@@ -16,6 +16,7 @@ from app.ai.providers import build_chat_provider
 from app.ai.providers.embeddings import build_embedding_provider
 from app.ai.tools import build_tool_registry
 from app.ai.workflows import build_workflow_client, build_workflow_registry
+from app.ai.workflows.urlguard import system_resolver
 from app.application.ports.health import HealthCheck
 from app.core.exceptions import register_exception_handlers
 from app.core.middleware import RequestContextMiddleware
@@ -65,6 +66,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent_registry = agent_registry
     app.state.workflow_client = workflow_client
     app.state.workflow_registry = workflow_registry
+    # 7f-2: resolver for validating tenant workflow URLs at read time. Real
+    # getaddrinfo in prod; conftest pins an offline one so tests never hit DNS.
+    app.state.workflow_url_resolver = system_resolver
     app.state.health_checks = checks
     log.info(
         "startup",

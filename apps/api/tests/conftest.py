@@ -276,6 +276,10 @@ async def db_app(
     app.state.agent_registry = build_agent_registry(
         settings, workflow_names=workflow_registry.list_names()
     )
+    # 7f-2: OFFLINE resolver so tenant-workflow URL validation never hits DNS.
+    # Defaults every host to a PUBLIC IP; SSRF tests override app.state to map
+    # a host to a private/blocked address.
+    app.state.workflow_url_resolver = lambda _host: ["93.184.216.34"]
     yield app
 
 

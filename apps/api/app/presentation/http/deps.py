@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.agents import AgentRegistry
 from app.ai.tools import ToolRegistry
 from app.ai.workflows import WorkflowRegistry
+from app.ai.workflows.urlguard import Resolver, system_resolver
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
 from app.application.ports.memory_extraction import MemoryExtractor
@@ -104,6 +105,15 @@ def get_workflow_registry(request: Request) -> WorkflowRegistry:
     return request.app.state.workflow_registry  # type: ignore[no-any-return]
 
 
+def get_workflow_url_resolver(request: Request) -> Resolver:
+    """7f-2: DNS resolver used to validate tenant workflow URLs at read time.
+    Injectable via app.state so tests stay OFFLINE; defaults to the real
+    getaddrinfo-backed resolver in production.
+    """
+    resolver: Resolver = getattr(request.app.state, "workflow_url_resolver", system_resolver)
+    return resolver
+
+
 def get_app_settings(request: Request) -> Settings:
     """Read the Settings instance built in create_app / lifespan.
 
@@ -146,6 +156,7 @@ ToolRegistryDep = Annotated[ToolRegistry, Depends(get_tool_registry)]
 AgentRegistryDep = Annotated[AgentRegistry, Depends(get_agent_registry)]
 WorkflowClientDep = Annotated[WorkflowClient, Depends(get_workflow_client)]
 WorkflowRegistryDep = Annotated[WorkflowRegistry, Depends(get_workflow_registry)]
+WorkflowUrlResolverDep = Annotated[Resolver, Depends(get_workflow_url_resolver)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 

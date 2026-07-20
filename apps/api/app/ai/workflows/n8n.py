@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import httpx
@@ -76,6 +76,7 @@ class N8nWorkflowClient:
         timeout_seconds: float,
         resolve: Resolver = system_resolver,
         allowlist: Iterable[str] = (),
+        url_overrides: Mapping[str, str] | None = None,
     ) -> None:
         self._client = client
         self._base_url = base_url.rstrip("/")
@@ -85,10 +86,31 @@ class N8nWorkflowClient:
         # security-conscious deployment sets N8N_ALLOWED_HOSTS.
         self._resolve = resolve
         self._allowlist = tuple(allowlist)
+        # 7f-2: per-request name -> URL map for TENANT workflows (their webhook
+        # lives on a DB row, not the built-in convention). Built-in names aren't
+        # in the map and fall through to the convention below.
+        self._url_overrides = dict(url_overrides or {})
+
+    def with_url_overrides(self, url_overrides: Mapping[str, str]) -> N8nWorkflowClient:
+        """Return a REQUEST-SCOPED copy that resolves the given tenant workflow
+        names to their row URLs, SHARING this client's pooled httpx transport
+        (no new connection pool). The copy is discarded after the request and
+        must not be closed — only the long-lived original owns `close()`.
+        """
+        return N8nWorkflowClient(
+            client=self._client,
+            base_url=self._base_url,
+            timeout_seconds=self._timeout_seconds,
+            resolve=self._resolve,
+            allowlist=self._allowlist,
+            url_overrides=url_overrides,
+        )
 
     def _url_for(self, name: str) -> str:
-        # 7c convention; 7f replaces this with a validated per-workflow URL.
-        return f"{self._base_url}/webhook/{name}"
+        # 7f-2: tenant workflows use their row URL; built-ins keep the 7c
+        # convention (base_url + /webhook/<name>).
+        override = self._url_overrides.get(name)
+        return override if override is not None else f"{self._base_url}/webhook/{name}"
 
     async def run(self, *, name: str, arguments: dict[str, Any]) -> WorkflowRun:
         url = self._url_for(name)

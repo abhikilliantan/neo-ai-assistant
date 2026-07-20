@@ -15,6 +15,7 @@ from app.infrastructure.db.models.tenancy import (
     Membership,
     Organization,
 )
+from app.infrastructure.db.models.workflows import Workflow
 
 __all__ = [
     "EMBEDDING_DIMENSION",
@@ -33,4 +34,5 @@ __all__ = [
     "Session",
     "User",
     "UserPreference",
+    "Workflow",
 ]

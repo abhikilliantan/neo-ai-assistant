@@ -254,3 +254,31 @@ def test_build_n8n_missing_config_error_is_not_a_silent_mock_fallback() -> None:
 
 def test_build_mock_is_the_default() -> None:
     assert isinstance(build_workflow_client(_base()), MockWorkflowClient)
+
+
+# --- 7f-2: per-request tenant URL dispatch ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_with_url_overrides_posts_to_tenant_url_sharing_the_pool() -> None:
+    """A tenant workflow POSTs to its ROW URL (override), not the built-in
+    convention; the rebound client SHARES the pooled httpx transport.
+    """
+    seen: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        return httpx.Response(200, json={"ok": True})
+
+    base = _client(handler)  # base_url=BASE, offline resolver -> public
+    rebound = base.with_url_overrides({"tenant_wf": "https://wf.example.test/hook/tenant_wf"})
+    assert rebound._client is base._client  # same pooled transport
+
+    run = await rebound.run(name="tenant_wf", arguments={"x": 1})
+    assert run.ok is True
+    assert seen["url"] == "https://wf.example.test/hook/tenant_wf"
+
+    # A name NOT in the overrides still uses the 7c convention.
+    run2 = await rebound.run(name="create_task", arguments={})
+    assert run2.ok is True
+    assert seen["url"] == f"{BASE}/webhook/create_task"

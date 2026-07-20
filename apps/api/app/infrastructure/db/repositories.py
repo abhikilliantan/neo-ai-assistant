@@ -31,9 +31,36 @@ from app.infrastructure.db.models import (
     Session,
     User,
     UserPreference,
+    Workflow,
 )
 
 # --- app-role (neo_app) repositories -----------------------------------------
+
+
+class WorkflowRepository:
+    """Tenant-scoped read of tenant-defined workflows (7f-2). RLS filters
+    organization_id at the DB layer; the explicit WHERE keeps app-layer intent
+    audit-visible, matching MemoryRepository's convention.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_enabled_for_org(self, organization_id: UUID) -> list[Workflow]:
+        """Enabled, non-soft-deleted rows for the org, oldest first (stable
+        registration order). Disabled / soft-deleted rows are excluded here so
+        the resolution layer never has to think about them.
+        """
+        stmt = (
+            select(Workflow)
+            .where(
+                Workflow.organization_id == organization_id,
+                Workflow.enabled.is_(True),
+                Workflow.deleted_at.is_(None),
+            )
+            .order_by(Workflow.created_at.asc(), Workflow.id.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
 
 class UserRepository:

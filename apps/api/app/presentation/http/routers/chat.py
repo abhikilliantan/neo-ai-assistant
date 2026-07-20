@@ -28,13 +28,18 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
-from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner
+from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner, agent_for_request
 from app.ai.tools import build_streaming_request_tool_registry
 from app.ai.tools.search_memory import MemoryRepoFactory
+from app.ai.workflows.registry import WorkflowRegistry
+from app.ai.workflows.tenant import resolve_request_workflows
+from app.ai.workflows.urlguard import Resolver
+from app.application.ports.agents import AgentDefinition
 from app.application.ports.chat import ChatMessage, ChatProvider, ToolExecutor
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.memory_extraction import MemoryExtractor
 from app.application.ports.repositories import MemoryRepositoryPort
+from app.application.ports.workflows import WorkflowClient
 from app.infrastructure.db import Database
 from app.infrastructure.db.repositories import (
     ConversationRepository,
@@ -51,6 +56,7 @@ from app.presentation.http.deps import (
     StreamingCurrentUserDep,
     WorkflowClientDep,
     WorkflowRegistryDep,
+    WorkflowUrlResolverDep,
     get_app_database,
     get_embedding_provider,
     get_memory_extractor,
@@ -232,6 +238,43 @@ async def _extract_and_store_memories(
         )
 
 
+async def _resolve_workflows_for_request(
+    *,
+    db: Database,
+    tenant_id: UUID,
+    settings: Any,
+    builtin_registry: WorkflowRegistry,
+    workflow_client: WorkflowClient,
+    resolver: Resolver,
+    agent: AgentDefinition,
+) -> tuple[WorkflowRegistry, WorkflowClient, AgentDefinition]:
+    """7f-2: resolve this tenant's workflow set (built-ins + enabled rows,
+    fail-closed + bad-row-skipping), rebind the client to the tenant URLs, and
+    expand the operator agent's per-request permissions. Returns the trio the
+    tool builder + AgentRunner consume. Shared by both endpoints so they can't
+    drift.
+    """
+    req_registry, url_overrides = await resolve_request_workflows(
+        db=db,
+        tenant_id=tenant_id,
+        builtin_registry=builtin_registry,
+        settings=settings,
+        resolve=resolver,
+    )
+    # Rebind so tenant workflows POST to their row URL. No-op for MockWorkflow
+    # Client (it ignores URLs) — hence duck-typed, not isinstance.
+    with_overrides = getattr(workflow_client, "with_url_overrides", None)
+    req_client: WorkflowClient = (
+        with_overrides(url_overrides) if with_overrides is not None else workflow_client
+    )
+    req_agent = agent_for_request(
+        agent,
+        builtin_workflow_names=frozenset(builtin_registry.list_names()),
+        request_workflow_names=frozenset(req_registry.list_names()),
+    )
+    return req_registry, req_client, req_agent
+
+
 # --- non-streaming ----------------------------------------------------------
 
 
@@ -247,6 +290,7 @@ async def chat(
     agents: AgentRegistryDep,
     workflow_registry: WorkflowRegistryDep,
     workflow_client: WorkflowClientDep,
+    workflow_url_resolver: WorkflowUrlResolverDep,
     background_tasks: BackgroundTasks,
     db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
@@ -320,10 +364,22 @@ async def chat(
         )
     augmented = _augment_messages(body.messages, memory_context)
 
+    # 7f-2: resolve tenant workflows (built-ins + this tenant's enabled rows),
+    # rebind the client to their URLs, and expand operator's per-request perms.
+    req_workflow_registry, req_workflow_client, agent = await _resolve_workflows_for_request(
+        db=db,
+        tenant_id=tenant_id,
+        settings=settings,
+        builtin_registry=workflow_registry,
+        workflow_client=workflow_client,
+        resolver=workflow_url_resolver,
+        agent=agent,
+    )
+
     # Tools: 6k-2 — bind search_memory to the SHORT-per-call session factory
     # (same as /chat/stream) rather than a held request session, so NO DB
-    # connection is pinned across the provider call. 7b — workflows join the
-    # tool set here too (WORKFLOWS ARE TOOLS), gated by workflows_enabled inside
+    # connection is pinned across the provider call. 7b/7f-2 — built-in AND
+    # tenant workflows join the tool set here, gated by workflows_enabled inside
     # the builder. The tool-use loop itself lives INSIDE the provider and is
     # untouched; intermediate tool_use/tool_result turns stay ephemeral (only
     # completion.content persists).
@@ -336,8 +392,8 @@ async def chat(
             embedding_provider=embedding_provider,
             organization_id=tenant_id,
             user_id=user.id,
-            workflow_registry=workflow_registry,
-            workflow_client=workflow_client,
+            workflow_registry=req_workflow_registry,
+            workflow_client=req_workflow_client,
         )
         specs = request_registry.specs()
         if specs:
@@ -349,7 +405,7 @@ async def chat(
     # byte-compat. See AgentRunner for the transparency argument.
     runner = AgentRunner(
         agent,
-        workflow_names=frozenset(workflow_registry.list_names()),
+        workflow_names=frozenset(req_workflow_registry.list_names()),
         # 7d: actor recorded EXPLICITLY on every workflow audit line.
         user_id=str(user.id),
         org_id=str(tenant_id),
@@ -538,6 +594,7 @@ async def chat_stream(
     agents: AgentRegistryDep,
     workflow_registry: WorkflowRegistryDep,
     workflow_client: WorkflowClientDep,
+    workflow_url_resolver: WorkflowUrlResolverDep,
     background_tasks: BackgroundTasks,
 ) -> StreamingResponse:
     if tenant_id is None:
@@ -601,13 +658,26 @@ async def chat_stream(
         )
     augmented = _augment_messages(body.messages, memory_context)
 
+    # 7f-2: resolve tenant workflows + rebind client + expand operator perms.
+    # Runs BEFORE the StreamingResponse is returned, so its short DB read holds
+    # no connection across the stream.
+    req_workflow_registry, req_workflow_client, agent = await _resolve_workflows_for_request(
+        db=db,
+        tenant_id=tenant_id,
+        settings=settings,
+        builtin_registry=workflow_registry,
+        workflow_client=workflow_client,
+        resolver=workflow_url_resolver,
+        agent=agent,
+    )
+
     # Tools: build a per-request STREAMING registry. search_memory binds to a
     # SHORT-per-call session factory (never holds a session across the LLM
     # stream). Retrieval/persist txns above/below remain the sole DB sessions
     # bookending this request; tool-driven DB access is entirely per-call.
     # The stream path DOES run the tool loop (wired in 6d) — tools_enabled=false
-    # → provider gets tools=None on BOTH paths. 7b: workflows join the tool set
-    # here too, gated by workflows_enabled inside the builder.
+    # → provider gets tools=None on BOTH paths. 7b/7f-2: built-in AND tenant
+    # workflows join the tool set here, gated by workflows_enabled in the builder.
     tools: list[dict[str, Any]] | None = None
     tool_executor: ToolExecutor | None = None
     if settings.tools_enabled:
@@ -617,8 +687,8 @@ async def chat_stream(
             embedding_provider=embedding_provider,
             organization_id=tenant_id,
             user_id=user.id,
-            workflow_registry=workflow_registry,
-            workflow_client=workflow_client,
+            workflow_registry=req_workflow_registry,
+            workflow_client=req_workflow_client,
         )
         specs = streaming_registry.specs()
         if specs:
@@ -629,7 +699,7 @@ async def chat_stream(
     # "assistant" is identity on both — pre-6h byte-compat.
     runner = AgentRunner(
         agent,
-        workflow_names=frozenset(workflow_registry.list_names()),
+        workflow_names=frozenset(req_workflow_registry.list_names()),
         # 7d: actor recorded EXPLICITLY on every workflow audit line.
         user_id=str(user.id),
         org_id=str(tenant_id),
