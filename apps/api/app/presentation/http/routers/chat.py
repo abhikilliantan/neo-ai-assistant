@@ -18,19 +18,20 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
+from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner
 from app.ai.tools import (
     build_request_tool_registry,
     build_streaming_request_tool_registry,
 )
 from app.ai.tools.search_memory import MemoryRepoFactory
-from app.application.ports.chat import ChatMessage, ChatProvider
+from app.application.ports.chat import ChatMessage, ChatProvider, ToolExecutor
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.memory_extraction import MemoryExtractor
 from app.application.ports.repositories import MemoryRepositoryPort
@@ -42,6 +43,7 @@ from app.infrastructure.db.repositories import (
 )
 from app.infrastructure.logging import get_logger
 from app.presentation.http.deps import (
+    AgentRegistryDep,
     CurrentTenantDep,
     CurrentUserDep,
     EmbeddingProviderDep,
@@ -234,6 +236,7 @@ async def chat(
     embedding_provider: EmbeddingProviderDep,
     memory_extractor: MemoryExtractorDep,
     settings: SettingsDep,
+    agents: AgentRegistryDep,
     db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
     if tenant_id is None:
@@ -282,8 +285,8 @@ async def chat(
     # mutated per request. The tool-use loop lives INSIDE the provider —
     # intermediate tool_use/tool_result turns are ephemeral and never surface
     # to persistence (only completion.content does).
-    tools = None
-    tool_executor = None
+    tools: list[dict[str, Any]] | None = None
+    tool_executor: ToolExecutor | None = None
     if settings.tools_enabled:
         request_registry = build_request_tool_registry(
             settings=settings,
@@ -296,6 +299,17 @@ async def chat(
         if specs:
             tools = specs
             tool_executor = request_registry.execute
+
+    # Agent seam (6g): the default "assistant" agent contributes an empty
+    # persona (system_prompt="") and no tool subset (tool_names=None), so
+    # both calls below are identity transforms — byte-for-byte compat with
+    # pre-6g behavior. Request-driven agent SELECTION arrives in 6h.
+    agent = agents.get(DEFAULT_AGENT_NAME)
+    assert agent is not None, f"built-in agent {DEFAULT_AGENT_NAME!r} missing from registry"
+    runner = AgentRunner(agent)
+    augmented = runner.prepare_messages(augmented)
+    if tools is not None and tool_executor is not None:
+        tools, tool_executor = runner.filter_tools(tools, tool_executor)
 
     completion = await provider.complete(
         messages=augmented,
@@ -456,6 +470,7 @@ async def chat_stream(
     embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
     memory_extractor: Annotated[MemoryExtractor, Depends(get_memory_extractor)],
     settings: SettingsDep,
+    agents: AgentRegistryDep,
 ) -> StreamingResponse:
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
@@ -494,8 +509,8 @@ async def chat_stream(
     # bookending this request; tool-driven DB access is entirely per-call.
     # tools_enabled=false → provider gets tools=None (kill switch gates the
     # stream path too).
-    tools: list[dict[str, object]] | None = None
-    tool_executor = None
+    tools: list[dict[str, Any]] | None = None
+    tool_executor: ToolExecutor | None = None
     if settings.tools_enabled:
         streaming_registry = build_streaming_request_tool_registry(
             settings=settings,
@@ -508,6 +523,17 @@ async def chat_stream(
         if specs:
             tools = specs
             tool_executor = streaming_registry.execute
+
+    # Agent seam (6g): same shape as /chat above — default agent contributes
+    # an identity transform on both messages and tools, so the streamed frames
+    # stay byte-for-byte identical to pre-6g. Request-driven agent SELECTION
+    # arrives in 6h.
+    agent = agents.get(DEFAULT_AGENT_NAME)
+    assert agent is not None, f"built-in agent {DEFAULT_AGENT_NAME!r} missing from registry"
+    runner = AgentRunner(agent)
+    augmented = runner.prepare_messages(augmented)
+    if tools is not None and tool_executor is not None:
+        tools, tool_executor = runner.filter_tools(tools, tool_executor)
 
     async def _generator() -> AsyncIterator[bytes]:
         # Leading endpoint meta frame — raw dict via json.dumps (same shape

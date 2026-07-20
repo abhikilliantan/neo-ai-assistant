@@ -17,6 +17,7 @@ belong in this slice.
 from __future__ import annotations
 
 from app.ai.agents.registry import AgentRegistry
+from app.ai.agents.runner import DEFAULT_AGENT_NAME, AgentRunner
 from app.application.ports.agents import AgentDefinition
 from app.infrastructure.config import Settings
 
@@ -43,6 +44,8 @@ def build_agent_registry(settings: Settings) -> AgentRegistry:
 
 
 __all__ = [
+    "DEFAULT_AGENT_NAME",
     "AgentRegistry",
+    "AgentRunner",
     "build_agent_registry",
 ]
