@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.agents import AgentRegistry
 from app.ai.tools import ToolRegistry
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
@@ -77,6 +78,14 @@ def get_tool_registry(request: Request) -> ToolRegistry:
     return request.app.state.tool_registry  # type: ignore[no-any-return]
 
 
+def get_agent_registry(request: Request) -> AgentRegistry:
+    """Built once in the lifespan. NO route consumes this yet — 6f is the
+    contract-and-registry slice; 6g wires it into the chat path. Present
+    here so 6g is a pure route-level change (same shape as get_tool_registry).
+    """
+    return request.app.state.agent_registry  # type: ignore[no-any-return]
+
+
 def get_app_settings(request: Request) -> Settings:
     """Read the Settings instance built in create_app / lifespan.
 
@@ -116,6 +125,7 @@ HealthChecksDep = Annotated[list[HealthCheck], Depends(get_health_checks)]
 EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
 MemoryExtractorDep = Annotated[MemoryExtractor, Depends(get_memory_extractor)]
 ToolRegistryDep = Annotated[ToolRegistry, Depends(get_tool_registry)]
+AgentRegistryDep = Annotated[AgentRegistry, Depends(get_agent_registry)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.ai.agents import build_agent_registry
 from app.ai.extractors import build_memory_extractor
 from app.ai.providers import build_chat_provider
 from app.ai.providers.embeddings import build_embedding_provider
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedding_provider = build_embedding_provider(settings)  # fail-fast if misconfigured
     memory_extractor = build_memory_extractor(settings, chat_provider)
     tool_registry = build_tool_registry(settings)
+    agent_registry = build_agent_registry(settings)
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
@@ -55,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.embedding_provider = embedding_provider
     app.state.memory_extractor = memory_extractor
     app.state.tool_registry = tool_registry
+    app.state.agent_registry = agent_registry
     app.state.health_checks = checks
     log.info(
         "startup",
@@ -64,6 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedding_provider=settings.embedding_provider,
         memory_extractor=settings.memory_extractor,
         tools=",".join(t["name"] for t in tool_registry.specs()),
+        agents=",".join(agent_registry.list_names()),
     )
 
     try:

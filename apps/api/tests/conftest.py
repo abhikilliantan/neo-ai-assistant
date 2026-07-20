@@ -234,6 +234,7 @@ async def db_app(
     db_engine: AsyncEngine,
     app_engine: AsyncEngine,
 ) -> AsyncIterator[FastAPI]:
+    from app.ai.agents import build_agent_registry
     from app.ai.extractors.mock import MockMemoryExtractor
     from app.ai.providers.embeddings.mock import MockEmbeddingProvider
     from app.ai.providers.mock import MockProvider
@@ -265,6 +266,7 @@ async def db_app(
     app.state.embedding_provider = MockEmbeddingProvider()
     app.state.memory_extractor = MockMemoryExtractor()
     app.state.tool_registry = build_tool_registry(settings)
+    app.state.agent_registry = build_agent_registry(settings)
     yield app
 
 
