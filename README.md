@@ -2,6 +2,12 @@
 
 Production-grade Enterprise AI Operating System.
 
+**Status:** Phases 1–7 complete (Foundation → Workflow Platform); Phase 8
+(Document Intelligence Platform 📄) in progress. Then Phase 9 Integration and
+Phase 10 Communication. See [`docs/roadmap.md`](docs/roadmap.md) for the
+canonical roadmap and [`docs/architecture.md`](docs/architecture.md) for the
+architecture.
+
 ## Stack
 
 - **Backend**: FastAPI · Python 3.12 · Clean Architecture
@@ -58,7 +64,10 @@ make test   # tests
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) (TBD).
+See [`docs/architecture.md`](docs/architecture.md) for the layered architecture,
+the orchestration layer, and how the Memory, Workflow, Document Intelligence,
+Integration, and Communication platforms sit behind it as peers — with
+side-effecting ones (Workflow, Integration, Communication) permission-gated.
 
 The API follows Clean Architecture:
 
