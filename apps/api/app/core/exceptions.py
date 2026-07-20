@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.infrastructure.logging import get_logger
 from app.shared.exceptions.ai import (
     ProviderAPIError,
     ProviderAuthError,
@@ -24,6 +25,61 @@ from app.shared.exceptions.embeddings import (
 
 def _error_body(code: str, message: str) -> dict[str, dict[str, str]]:
     return {"error": {"code": code, "message": message}}
+
+
+def _cors_headers(request: Request) -> dict[str, str]:
+    """CORS headers for the catch-all 500, echoing the request Origin ONLY when
+    it is in the app's configured allowlist (never reflecting an arbitrary
+    origin). Mirrors the app's explicit-origin + credentials CORSMiddleware
+    config — see `_internal_error_handler` for why we set these by hand.
+    """
+    settings = getattr(request.app.state, "settings", None)
+    allowed = settings.cors_origins if settings is not None else []
+    origin = request.headers.get("origin")
+    if origin and (origin in allowed or "*" in allowed):
+        return {
+            "access-control-allow-origin": origin,
+            "access-control-allow-credentials": "true",  # matches create_app's fixed CORS config
+            "vary": "Origin",
+        }
+    return {}
+
+
+async def _internal_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Catch-all for UNHANDLED exceptions (7e-fix). Two jobs:
+
+    1. Log the full traceback at ERROR — the ONLY place the detail is kept; it
+       NEVER reaches the client. Safety must not cost debuggability.
+    2. Return the generic error envelope WITH CORS headers.
+
+    Why set CORS headers by hand: a handler registered for `Exception` runs in
+    Starlette's ServerErrorMiddleware, which sits OUTSIDE CORSMiddleware, so its
+    response never passes back through CORS. Without this, the 500 ships with no
+    Access-Control-Allow-Origin, the browser can't read it, and fetch() rejects
+    with "Failed to fetch" — disguising every server error as a connectivity
+    problem (which burned a whole debugging cycle). Typed handlers below don't
+    need this: they run in the inner ExceptionMiddleware and CORS decorates them
+    normally.
+
+    STREAMING BOUNDARY (not a bug): once an SSE body has started, its headers are
+    already on the wire, so a mid-stream failure cannot retroactively gain CORS
+    headers. This handler covers PRE-stream failures (e.g. an error thrown before
+    /chat/stream's first frame — exactly the agent_name case) and every
+    non-streaming route. /chat/stream reports mid-stream provider errors as
+    in-band SSE `error` frames instead.
+    """
+    get_logger("http.unhandled").error(
+        "unhandled_exception",
+        method=request.method,
+        path=request.url.path,
+        error_type=type(exc).__name__,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        _error_body("internal_error", "an internal error occurred"),
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        headers=_cors_headers(request),
+    )
 
 
 async def _authentication_handler(_: Request, exc: Exception) -> JSONResponse:
@@ -145,3 +201,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(EmbeddingProviderRateLimitError, _embedding_rate_limit_handler)
     app.add_exception_handler(EmbeddingProviderUnavailableError, _embedding_unavailable_handler)
     app.add_exception_handler(EmbeddingProviderAPIError, _embedding_api_handler)
+    # Catch-all LAST — the most specific handler always wins, so the typed ones
+    # above still own their errors; this only fires for genuinely unhandled ones.
+    app.add_exception_handler(Exception, _internal_error_handler)
