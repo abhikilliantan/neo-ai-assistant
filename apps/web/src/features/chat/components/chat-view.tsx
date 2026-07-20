@@ -2,6 +2,8 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Agent, ChatMessage, ToolInvocation } from "@neo/shared-types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -265,6 +267,49 @@ export function ChatView() {
   );
 }
 
+// Markdown element styling for assistant messages. No @tailwindcss/typography
+// dependency — we style only what actually surfaces in chat, via a components
+// map. Links open in a new tab with noopener + noreferrer (untrusted output).
+// react-markdown is markdown-only by default (no rehype-raw, no
+// allowDangerousHtml), so raw HTML in model output is escaped, not rendered.
+const MARKDOWN_COMPONENTS: Components = {
+  p: (props) => <p className="mb-2 last:mb-0" {...props} />,
+  strong: (props) => <strong className="font-semibold" {...props} />,
+  em: (props) => <em className="italic" {...props} />,
+  ul: (props) => <ul className="mb-2 list-disc pl-5 last:mb-0" {...props} />,
+  ol: (props) => <ol className="mb-2 list-decimal pl-5 last:mb-0" {...props} />,
+  li: (props) => <li className="mb-0.5" {...props} />,
+  h1: (props) => <h1 className="mb-2 mt-1 text-base font-semibold" {...props} />,
+  h2: (props) => <h2 className="mb-2 mt-1 text-sm font-semibold" {...props} />,
+  h3: (props) => <h3 className="mb-1 mt-1 text-sm font-semibold" {...props} />,
+  blockquote: (props) => (
+    <blockquote className="mb-2 border-l-2 border-muted-foreground/40 pl-3 italic" {...props} />
+  ),
+  a: ({ href, children, ...rest }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="underline underline-offset-2"
+      {...rest}
+    >
+      {children}
+    </a>
+  ),
+  // Inline vs. block code: react-markdown renders inline `code` bare and
+  // fenced blocks as <pre><code>…</code></pre>. Style each layer where it
+  // sits — `pre` gets the block chrome, `code` inside `pre` is transparent.
+  code: (props) => (
+    <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[0.85em]" {...props} />
+  ),
+  pre: (props) => (
+    <pre
+      className="mb-2 overflow-x-auto rounded-md bg-background/60 p-2 text-xs [&_code]:bg-transparent [&_code]:p-0"
+      {...props}
+    />
+  ),
+};
+
 function MessageBubble({
   role,
   content,
@@ -280,12 +325,10 @@ function MessageBubble({
 }) {
   const isUser = role === "user";
   const chips = !isUser && toolInvocations && toolInvocations.length > 0;
-  // Agent label is LIVE-only: only present on assistant messages that came
-  // from the current session's stream (meta frame). History reload doesn't
-  // set it, so reloaded messages render with no label. Rendered ABOVE the
-  // tool chips: reading order is "which agent → what it did → answer".
-  // Visually subordinate to chips (no border/pill, muted, small).
-  const agentLabel = !isUser && agent;
+  // Agent label is LIVE-only (set by meta frame during stream). Hidden for
+  // the default agent — the picker already shows "assistant" and repeating
+  // it on every bubble is noise. Non-default names ("recall", …) still show.
+  const agentLabel = !isUser && agent && agent !== DEFAULT_AGENT.name;
   return (
     <li className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div className="flex max-w-[75%] flex-col items-start gap-1">
@@ -306,12 +349,22 @@ function MessageBubble({
         )}
         <div
           className={cn(
-            "whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
-            isUser ? "bg-primary text-primary-foreground" : "bg-muted",
+            "rounded-lg px-3 py-2 text-sm",
+            // User text is literal — preserve whitespace, no markdown.
+            isUser && "whitespace-pre-wrap bg-primary text-primary-foreground",
+            !isUser && "bg-muted",
             pending && "text-muted-foreground",
           )}
         >
-          {pending ? "Thinking…" : content}
+          {pending ? (
+            "Thinking…"
+          ) : isUser ? (
+            content
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+              {content}
+            </ReactMarkdown>
+          )}
         </div>
       </div>
     </li>
