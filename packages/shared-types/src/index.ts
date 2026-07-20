@@ -125,6 +125,10 @@ export type ConversationMessage = {
 
 export type ConversationDetail = ConversationSummary & {
   messages: ConversationMessage[];
+  // 6j: effective per-thread agent — the picker restores to this value
+  // when a conversation is reopened. Server resolves NULL storage to the
+  // runtime default, so this is always a concrete name.
+  agent: string;
 };
 
 // --- agents (mirrors backend AgentOut whitelist: name + description only) ---

@@ -542,12 +542,14 @@ async def test_chat_stream_meta_carries_selected_recall_agent(db_app) -> None:  
 
 
 @pytest.mark.asyncio
-async def test_agent_choice_is_ephemeral_conversation_reload_carries_no_agent(  # type: ignore[no-untyped-def]
+async def test_agent_choice_persists_on_conversation_but_not_on_messages(  # type: ignore[no-untyped-def]
     db_client,
 ) -> None:
-    """After a turn with agent="recall", reloading the conversation via
-    GET /conversations/{id} must still show ONLY [user, assistant] with NO
-    agent field on any message row — persistence lands in 6j, not here.
+    """Narrowed from 6i-1 for 6j:
+    - the CONVERSATION now carries the agent (persistence landed);
+    - MESSAGES still carry no agent — the agent belongs to the thread,
+      not to each turn (per-message agent would be a later slice if
+      useful).
     """
     token = await _register_and_token(db_client, "echo-ephemeral@example.com")
     r = await db_client.post(
@@ -566,7 +568,251 @@ async def test_agent_choice_is_ephemeral_conversation_reload_carries_no_agent(  
         headers={"Authorization": f"Bearer {token}"},
     )
     assert detail.status_code == 200
-    msgs = detail.json()["messages"]
+    body = detail.json()
+    # 6j: conversation-level agent surfaces on reload.
+    assert body["agent"] == "recall"
+    # Messages remain agent-free.
+    msgs = body["messages"]
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     for m in msgs:
         assert "agent" not in m
+
+
+# --- Phase 6j: per-conversation agent persistence --------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_conversation_with_recall_persists_agent_name(db_client) -> None:  # type: ignore[no-untyped-def]
+    token = await _register_and_token(db_client, "6j-new-recall@example.com")
+    r = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"agent": "recall", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 200
+    conv_id = r.json()["conversation_id"]
+
+    detail = await db_client.get(
+        f"/api/v1/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["agent"] == "recall"
+
+
+@pytest.mark.asyncio
+async def test_new_conversation_no_agent_stores_null_reads_as_default(  # type: ignore[no-untyped-def]
+    db_client,
+    db_session,
+) -> None:
+    """No `agent` in body → row's agent_name is NULL (never explicitly set).
+    Read-side resolves NULL → DEFAULT_AGENT_NAME, so the UI restores the
+    picker to "assistant" without a None branch. Stored-as-NULL is what
+    lets the default be renamed in the future without touching old rows.
+    """
+    from uuid import UUID
+
+    from sqlalchemy import text as _text
+
+    token = await _register_and_token(db_client, "6j-new-noagent@example.com")
+    r = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r.status_code == 200
+    conv_id = r.json()["conversation_id"]
+
+    # Raw DB check via the privileged (RLS-bypass) session: agent_name IS NULL.
+    row = (
+        await db_session.execute(
+            _text("SELECT agent_name FROM conversations WHERE id = :id").bindparams(
+                id=UUID(conv_id)
+            )
+        )
+    ).one()
+    assert row.agent_name is None
+
+    # HTTP read resolves NULL → default.
+    detail = await db_client.get(
+        f"/api/v1/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["agent"] == DEFAULT_AGENT_NAME
+
+
+@pytest.mark.asyncio
+async def test_continuing_existing_recall_with_no_agent_resolves_recall(  # type: ignore[no-untyped-def]
+    db_app,
+) -> None:
+    """THE 6j point: continuing a thread with NO body.agent must resolve to
+    the STORED value, not silently fall back to the default. Proven with a
+    spy provider that receives the recall persona on turn 2 even though
+    body.agent is absent.
+    """
+    spy_provider = _RecordingProvider()
+    db_app.state.chat_provider = spy_provider
+
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "6j-continue-recall@example.com")
+        # Turn 1: pick recall explicitly.
+        r1 = await c.post(
+            "/api/v1/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "agent": "recall",
+                "messages": [{"role": "user", "content": "turn one"}],
+            },
+        )
+        assert r1.status_code == 200
+        conv_id = r1.json()["conversation_id"]
+
+        # Turn 2: NO agent in body. Server should still resolve "recall".
+        r2 = await c.post(
+            "/api/v1/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "conversation_id": conv_id,
+                "messages": [
+                    {"role": "user", "content": "turn one"},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "turn two"},
+                ],
+            },
+        )
+    assert r2.status_code == 200
+    assert r2.json()["agent"] == "recall"
+    # Provider on turn 2 got the recall persona as leading system message.
+    assert spy_provider.last_messages is not None
+    assert spy_provider.last_messages[0] == ChatMessage(role="system", content=_RECALL_PERSONA)
+
+
+@pytest.mark.asyncio
+async def test_continuing_and_switching_to_assistant_updates_stored_agent(  # type: ignore[no-untyped-def]
+    db_client,
+) -> None:
+    """Update-on-change semantic: the thread follows the user's latest
+    explicit picker choice. Turn 1: recall. Turn 2: assistant. GET must
+    return assistant — otherwise the picker (which now shows "assistant")
+    would silently disagree with the stored value.
+    """
+    token = await _register_and_token(db_client, "6j-switch@example.com")
+    r1 = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"agent": "recall", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert r1.status_code == 200
+    conv_id = r1.json()["conversation_id"]
+
+    r2 = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "conversation_id": conv_id,
+            "agent": "assistant",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "ok"},
+                {"role": "user", "content": "different"},
+            ],
+        },
+    )
+    assert r2.status_code == 200
+    assert r2.json()["agent"] == "assistant"
+
+    detail = await db_client.get(
+        f"/api/v1/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["agent"] == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_pre_existing_null_agent_row_reads_as_default_and_chat_works(  # type: ignore[no-untyped-def]
+    db_client,
+    app_session_factory,
+) -> None:
+    """Existing rows created before 6j have agent_name = NULL. GET must
+    return the default, and continuing the chat must still work. This is
+    the backward-compat guarantee for existing conversations.
+    """
+    from uuid import UUID
+
+    from app.infrastructure.db.repositories import ConversationRepository as _CR
+
+    reg = await db_client.post(
+        "/api/v1/auth/register",
+        json={"email": "6j-pre-null@example.com", "password": "password12345"},
+    )
+    assert reg.status_code == 201, reg.text
+    token = reg.json()["access_token"]
+    tenant_id = UUID(reg.json()["active_tenant_id"])
+    user_id = UUID(reg.json()["user_id"])
+
+    # Insert a conversation row directly with NULL agent_name — models a
+    # pre-6j row that survived the migration.
+    session = await app_session_factory(tenant_id)
+    try:
+        conv = await _CR(session).create(
+            organization_id=tenant_id,
+            user_id=user_id,
+            title="legacy",
+            agent_name=None,
+        )
+        await session.commit()
+        conv_id = str(conv.id)
+    finally:
+        await session.close()
+
+    # Read: agent resolves to default.
+    detail = await db_client.get(
+        f"/api/v1/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["agent"] == DEFAULT_AGENT_NAME
+
+    # Continue: chat still works (no exceptions, resolves to default).
+    r = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "conversation_id": conv_id,
+            "messages": [{"role": "user", "content": "hi legacy"}],
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["agent"] == DEFAULT_AGENT_NAME
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_unknown_agent_writes_no_conversation_row(  # type: ignore[no-untyped-def]
+    db_app,
+) -> None:
+    """Beyond the 6h assertion (JSON 404, no SSE frames): also verify NO
+    orphan user-message / conversation row was written. Fresh user, so any
+    write would show as a non-empty /conversations list.
+    """
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "6j-stream-orphan@example.com")
+        r = await c.post(
+            "/api/v1/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "agent": "does-not-exist",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        assert r.status_code == 404
+
+        listing = await c.get(
+            "/api/v1/conversations",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert listing.status_code == 200
+    assert listing.json() == []

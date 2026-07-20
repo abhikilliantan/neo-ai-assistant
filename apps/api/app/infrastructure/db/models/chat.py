@@ -42,6 +42,11 @@ class Conversation(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 6j: per-thread agent selector. NULL means "never explicitly set" and
+    # resolves to DEFAULT_AGENT_NAME at read time — keeping the default
+    # renamable without touching old rows. No FK: agents are a code-owned
+    # registry, not a table.
+    agent_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     organization: Mapped[Organization] = relationship()
     user: Mapped[User] = relationship()

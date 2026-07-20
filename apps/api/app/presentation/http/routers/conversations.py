@@ -11,6 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
+from app.ai.agents import DEFAULT_AGENT_NAME
 from app.infrastructure.db.repositories import ConversationRepository, MessageRepository
 from app.presentation.http.deps import CurrentTenantDep, CurrentUserDep, TenantSessionDep
 from app.presentation.http.schemas.chat import (
@@ -62,6 +63,8 @@ async def get_conversation(
         title=conv.title,
         last_message_at=conv.last_message_at,
         created_at=conv.created_at,
+        # 6j: NULL means "never set" — resolve to runtime default at read.
+        agent=conv.agent_name or DEFAULT_AGENT_NAME,
         messages=[
             ConversationMessageOut(
                 id=m.id,

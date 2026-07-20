@@ -67,4 +67,9 @@ class ConversationDetail(BaseModel):
     title: str | None
     last_message_at: datetime | None
     created_at: datetime
+    # 6j: effective per-thread agent. Resolved server-side to `stored value
+    # or DEFAULT_AGENT_NAME` so the UI never has a None branch when
+    # restoring the picker. Agent belongs to the thread — messages stay
+    # agent-free (per-message would be a later slice if useful).
+    agent: str
     messages: list[ConversationMessageOut]

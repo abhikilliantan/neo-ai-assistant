@@ -94,14 +94,31 @@ class ConversationRepository:
         organization_id: UUID,
         user_id: UUID,
         title: str | None = None,
+        agent_name: str | None = None,
     ) -> Conversation:
-        c = Conversation(organization_id=organization_id, user_id=user_id, title=title)
+        c = Conversation(
+            organization_id=organization_id,
+            user_id=user_id,
+            title=title,
+            agent_name=agent_name,
+        )
         self.session.add(c)
         await self.session.flush()
         return c
 
     async def get_by_id(self, conversation_id: UUID) -> Conversation | None:
         return await self.session.get(Conversation, conversation_id)
+
+    async def set_agent(self, conversation_id: UUID, agent_name: str) -> None:
+        """Update the stored agent for a thread. Called when the caller
+        provides an explicit body.agent that differs from what's already
+        stored — the thread follows the user's latest picker choice.
+        """
+        c = await self.session.get(Conversation, conversation_id)
+        if c is None:
+            return
+        c.agent_name = agent_name
+        await self.session.flush()
 
     async def list_for_org(
         self, organization_id: UUID, *, active_only: bool = True

@@ -242,16 +242,12 @@ async def chat(
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
 
-    # Resolve the agent FIRST (6h). Bogus name → 404 before any side effect:
-    # no conversation created, no user message persisted, no embedding call
-    # for retrieval, no tool-registry build. The tenant session dep would
-    # roll back a failed txn on /chat anyway, but early-return keeps the
-    # behavior aligned with /chat/stream (which commits Txn A eagerly).
-    agent_name = body.agent or DEFAULT_AGENT_NAME
-    agent = agents.get(agent_name)
-    if agent is None:
-        raise NotFoundError(f"agent not found: {agent_name!r}")
-    get_logger("chat.turn").info("chat.turn", agent=agent_name, user_id=str(user.id))
+    # Phase 1 (6j): early-validate `body.agent` BEFORE any side effect. This
+    # keeps the 6h no-orphan-row guarantee: an unknown name 404s before we
+    # create a conversation or persist the user message. Body.agent = None is
+    # legal here — the stored value (or the default) supplies the name below.
+    if body.agent is not None and agents.get(body.agent) is None:
+        raise NotFoundError(f"agent not found: {body.agent!r}")
 
     conv_repo = ConversationRepository(session)
     msg_repo = MessageRepository(session)
@@ -265,7 +261,35 @@ async def chat(
             organization_id=tenant_id,
             user_id=user.id,
             title=_title_from(body.messages[-1].content),
+            # 6j: creation-time agent. NULL when the caller didn't pick one,
+            # so the row resolves to whatever DEFAULT_AGENT_NAME is at read
+            # time (survives a future default rename cleanly).
+            agent_name=body.agent,
         )
+
+    # Phase 2 (6j): body.agent wins → stored → default. Defensive fallback
+    # if a stored name no longer exists in the registry (agent removed in a
+    # deploy) — don't lock a user out of their own thread.
+    if body.agent is not None:
+        agent_name = body.agent
+    elif conv.agent_name is not None:
+        agent_name = conv.agent_name
+    else:
+        agent_name = DEFAULT_AGENT_NAME
+    agent = agents.get(agent_name)
+    if agent is None:
+        agent_name = DEFAULT_AGENT_NAME
+        agent = agents.get(DEFAULT_AGENT_NAME)
+    assert agent is not None, f"built-in default {DEFAULT_AGENT_NAME!r} missing from registry"
+
+    # Continuation with an explicit picker choice that differs from the
+    # stored value → update. Rationale in the 6j report: the picker is
+    # visible and active; the stored value should follow the user's latest
+    # explicit choice rather than silently disagreeing with the UI.
+    if body.agent is not None and conv.agent_name != body.agent:
+        await conv_repo.set_agent(conv.id, body.agent)
+
+    get_logger("chat.turn").info("chat.turn", agent=agent_name, user_id=str(user.id))
 
     await msg_repo.add(
         organization_id=tenant_id,
@@ -407,10 +431,13 @@ async def _persist_user_and_resolve_conversation(
     user_id: UUID,
     conversation_id: UUID | None,
     user_message: str,
-) -> UUID:
+    body_agent: str | None,
+) -> tuple[UUID, str | None]:
     """Short tenant write-txn: resolve-or-create conversation + persist the
-    user message. Returns the conversation id. Session opens and closes here
-    — nothing is held for the caller.
+    user message + write per-thread agent (6j). Returns (conv_id, stored
+    agent_name) — the caller layers the DEFAULT_AGENT_NAME fallback on
+    `stored is None`. Session opens and closes here — nothing is held for
+    the caller.
     """
     async with db.sessionmaker() as session, session.begin():
         await session.execute(
@@ -419,23 +446,36 @@ async def _persist_user_and_resolve_conversation(
         conv_repo = ConversationRepository(session)
         msg_repo = MessageRepository(session)
 
+        stored_agent: str | None
         if conversation_id is not None:
             conv = await conv_repo.get_by_id(conversation_id)
             if conv is None:
                 raise NotFoundError("conversation not found")
+            # 6j: continuation with an explicit picker choice that differs
+            # from the stored value → update, so the thread tracks the
+            # user's latest visible choice.
+            if body_agent is not None and conv.agent_name != body_agent:
+                await conv_repo.set_agent(conv.id, body_agent)
+                stored_agent = body_agent
+            else:
+                stored_agent = conv.agent_name
         else:
             conv = await conv_repo.create(
                 organization_id=tenant_id,
                 user_id=user_id,
                 title=_title_from(user_message),
+                # NULL when the caller didn't pick — resolves to the
+                # runtime default at read time.
+                agent_name=body_agent,
             )
+            stored_agent = body_agent
         await msg_repo.add(
             organization_id=tenant_id,
             conversation_id=conv.id,
             role="user",
             content=user_message,
         )
-        return conv.id
+        return conv.id, stored_agent
 
 
 async def _persist_assistant_and_touch(
@@ -484,29 +524,40 @@ async def chat_stream(
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
 
-    # Resolve the agent FIRST (6h) — BEFORE Txn A eagerly persists the user
-    # message and BEFORE we return StreamingResponse. Unknown → NotFoundError
-    # bubbles to the existing exception handler → clean JSON 404 envelope,
-    # NOT a mid-stream error frame. Same discipline as the 4b conversation-
-    # not-found 404 raised before the stream is opened.
-    agent_name = body.agent or DEFAULT_AGENT_NAME
-    agent = agents.get(agent_name)
-    if agent is None:
-        raise NotFoundError(f"agent not found: {agent_name!r}")
-    get_logger("chat.turn").info("chat.turn", agent=agent_name, user_id=str(user.id))
+    # Phase 1 (6j): early-validate body.agent BEFORE Txn A. Unknown → 404
+    # bubbles to the exception handler → clean JSON envelope, NO orphan
+    # user-message row, NO SSE frames — same discipline as 4b's
+    # conversation-not-found 404 raised before StreamingResponse.
+    if body.agent is not None and agents.get(body.agent) is None:
+        raise NotFoundError(f"agent not found: {body.agent!r}")
 
     # --- Txn A: BEFORE the stream ------------------------------------------
-    # Resolve/create conversation + persist the user message in a short txn,
-    # then release the connection. Errors here (NotFoundError, provider
-    # config issues) still surface as normal HTTP responses because
-    # StreamingResponse hasn't been returned yet.
-    conv_id = await _persist_user_and_resolve_conversation(
+    # Resolve/create conversation + persist the user message + write per-
+    # thread agent in a short txn, then release the connection.
+    conv_id, stored_agent = await _persist_user_and_resolve_conversation(
         db,
         tenant_id=tenant_id,
         user_id=user.id,
         conversation_id=body.conversation_id,
         user_message=body.messages[-1].content,
+        body_agent=body.agent,
     )
+
+    # Phase 2 (6j): body.agent wins → stored → default. Defensive fallback
+    # if stored name is no longer registered. body.agent was validated in
+    # phase 1, so it never falls through this branch.
+    if body.agent is not None:
+        agent_name = body.agent
+    elif stored_agent is not None:
+        agent_name = stored_agent
+    else:
+        agent_name = DEFAULT_AGENT_NAME
+    agent = agents.get(agent_name)
+    if agent is None:
+        agent_name = DEFAULT_AGENT_NAME
+        agent = agents.get(DEFAULT_AGENT_NAME)
+    assert agent is not None, f"built-in default {DEFAULT_AGENT_NAME!r} missing from registry"
+    get_logger("chat.turn").info("chat.turn", agent=agent_name, user_id=str(user.id))
 
     # Memory retrieval — its OWN short session, closed BEFORE we return
     # StreamingResponse. Never held across the LLM stream.
