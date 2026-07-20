@@ -112,10 +112,19 @@ class Settings(BaseSettings):
     # HARD timeout. Load-bearing: the call runs inside the tool loop inside the
     # live provider stream, so a hanging webhook would stall a watched response.
     n8n_timeout_seconds: float = 10.0
+    # 7f-1 SSRF allowlist (comma-separated hosts). Empty = deny-by-range only
+    # (the guard still blocks loopback/metadata/private ranges). When set, it is
+    # authoritative: nothing outside it is reachable. Exact host match, no
+    # wildcards. A security-conscious deployment turns this on.
+    n8n_allowed_hosts: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
+
+    @property
+    def n8n_allowed_hosts_list(self) -> list[str]:
+        return [h.strip().lower() for h in self.n8n_allowed_hosts.split(",") if h.strip()]
 
     @property
     def is_prod(self) -> bool:

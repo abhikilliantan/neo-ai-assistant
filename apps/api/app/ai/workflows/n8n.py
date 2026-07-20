@@ -40,11 +40,19 @@ amortize TLS/connect on the latency path, closed via `close()` in the lifespan.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
 
+from app.ai.workflows.urlguard import (
+    Resolver,
+    UrlNotAllowedError,
+    system_resolver,
+    validate_workflow_url,
+)
 from app.application.ports.workflows import WorkflowRun
 
 
@@ -66,18 +74,43 @@ class N8nWorkflowClient:
         client: httpx.AsyncClient,
         base_url: str,
         timeout_seconds: float,
+        resolve: Resolver = system_resolver,
+        allowlist: Iterable[str] = (),
     ) -> None:
         self._client = client
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        # 7f-1 SSRF guard inputs. `resolve` is injectable so tests stay offline;
+        # `allowlist` (empty by default) narrows reachable hosts when a
+        # security-conscious deployment sets N8N_ALLOWED_HOSTS.
+        self._resolve = resolve
+        self._allowlist = tuple(allowlist)
 
     def _url_for(self, name: str) -> str:
         # 7c convention; 7f replaces this with a validated per-workflow URL.
         return f"{self._base_url}/webhook/{name}"
 
     async def run(self, *, name: str, arguments: dict[str, Any]) -> WorkflowRun:
+        url = self._url_for(name)
+        # 7f-1: validate the target BEFORE any outbound call. The guard resolves
+        # + range-checks every IP (getaddrinfo is blocking → run it off the
+        # loop). A rejected URL is a normal failure, never a raise (same 7c
+        # posture), and the marker leaks NO host, IP, or reason — telling an
+        # attacker WHY it was blocked would help them map the internal network.
         try:
-            response = await self._client.post(self._url_for(name), json=arguments)
+            await asyncio.to_thread(
+                validate_workflow_url,
+                url,
+                resolve=self._resolve,
+                allowlist=self._allowlist,
+            )
+        except UrlNotAllowedError:
+            return WorkflowRun(
+                ok=False,
+                output=f"workflow {name!r} was blocked by the outbound security policy",
+            )
+        try:
+            response = await self._client.post(url, json=arguments)
         except httpx.TimeoutException:
             # NO RETRY (see module docstring): a timed-out webhook may already
             # have run. Curated marker only — no URL, token, or exception text.

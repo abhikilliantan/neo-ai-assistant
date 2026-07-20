@@ -77,14 +77,20 @@ def build_workflow_client(settings: Settings) -> WorkflowClient:
             )
         # ONE long-lived pooled client. The token lives ONLY as a default
         # header here — never formatted into a URL, log, or returned string.
+        # follow_redirects=False is LOAD-BEARING for the SSRF guard (7f-1): a
+        # permitted public URL that 302s to the metadata endpoint would defeat
+        # it entirely. httpx defaults to False; we set it explicitly so nobody
+        # flips it, and a test asserts it.
         http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.n8n_timeout_seconds),
             headers={"Authorization": f"Bearer {settings.n8n_auth_token}"},
+            follow_redirects=False,
         )
         return N8nWorkflowClient(
             client=http_client,
             base_url=settings.n8n_base_url,
             timeout_seconds=settings.n8n_timeout_seconds,
+            allowlist=settings.n8n_allowed_hosts_list,
         )
     raise RuntimeError(f"Unknown WORKFLOW_CLIENT: {settings.workflow_client!r}")
 

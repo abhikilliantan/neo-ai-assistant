@@ -40,6 +40,15 @@ TOKEN = "n8n-secret-tok-DO-NOT-LOG-abc123"
 BASE = "https://n8n.example.test"
 
 
+def _offline_resolver(host: str) -> list[str]:
+    """7f-1: the client now runs the SSRF guard, which resolves the host. Inject
+    an OFFLINE resolver so these tests never touch real DNS — the code-owned
+    BASE host resolves to a public IP and sails through the guard, leaving 7c
+    behavior unchanged.
+    """
+    return ["93.184.216.34"]  # public
+
+
 def _base(**overrides: object) -> Settings:
     kwargs: dict[str, object] = {
         "python_env": "test",
@@ -69,7 +78,9 @@ def _client(handler: Any, *, token: str = TOKEN, timeout: float = 10.0) -> N8nWo
         headers={"Authorization": f"Bearer {token}"},
         timeout=httpx.Timeout(timeout),
     )
-    return N8nWorkflowClient(client=http, base_url=BASE, timeout_seconds=timeout)
+    return N8nWorkflowClient(
+        client=http, base_url=BASE, timeout_seconds=timeout, resolve=_offline_resolver
+    )
 
 
 # --- happy paths ------------------------------------------------------------
