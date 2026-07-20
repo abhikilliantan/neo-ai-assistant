@@ -1,7 +1,7 @@
 # Neo AI Assistant — dev entrypoint
 # Thin wrapper over docker compose + workspace scripts.
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap up down logs ps clean api web fmt lint test precommit migrate migration shell-db
+.PHONY: help bootstrap up down logs ps clean api api-rebuild web fmt lint test precommit migrate migration shell-db
 
 include .env
 export
@@ -32,6 +32,13 @@ clean:  ## Stop stack and remove volumes
 
 api:  ## Run FastAPI locally (no docker)
 	cd apps/api && uvicorn app.main:app --reload --port 8000
+
+api-rebuild:  ## Rebuild api image + refresh anon volumes (use after adding a Python dep)
+	# docker-compose.override.yml mounts an ANONYMOUS volume at /app/.venv.
+	# Anon volumes are sticky across `docker compose up -d`, so a plain rebuild
+	# reattaches the stale pre-dep venv → ModuleNotFoundError crash-loop that a
+	# normal rebuild never fixes. --renew-anon-volumes discards it. Bitten twice.
+	docker compose build api && docker compose up -d --force-recreate --renew-anon-volumes api
 
 web:  ## Run Next.js locally (no docker)
 	pnpm --filter web dev

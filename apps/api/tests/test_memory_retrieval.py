@@ -456,3 +456,82 @@ async def test_retrieval_disabled_skips_embedding_call(
     assert query_calls == []
     # The 5c write still runs.
     assert any(c["input_type"] == "document" for c in spy.calls)
+
+
+# --- 6k-1 regression: retrieval filters by embedding_model ------------------
+
+
+@pytest.mark.asyncio
+async def test_retrieval_excludes_rows_from_a_foreign_embedding_model(  # type: ignore[no-untyped-def]
+    db_app,
+    app_session_factory,
+) -> None:
+    """The 5d demo bug: rows embedded with a DIFFERENT model sit in the
+    candidate pool, and comparing across vector spaces yields garbage
+    similarities that drown out the real match. 6c added the guard to
+    search_similar; 6k-1 wires it into _retrieve_memory_context.
+
+    Seed two memories for the same user:
+      - "foreign anchor" — stored with embedding_model="voyage-3.1-foreign"
+      - "mock anchor"    — stored with the current mock model
+    Query for "foreign anchor". With the guard, only the mock-model row is
+    a candidate — nothing about "foreign anchor" reaches the system message.
+    Without the guard (regression), the foreign row would leak in.
+    """
+    from app.infrastructure.db.repositories import MemoryRepository as _MR
+
+    rec = _RecordingProvider()
+    db_app.state.chat_provider = rec
+
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        reg = await _register(c, "retr-model-guard@example.com")
+        token = reg["access_token"]
+        tenant_id = UUID(reg["active_tenant_id"])
+        user_id = UUID(reg["user_id"])
+
+        mock_provider = MockEmbeddingProvider()
+
+        # Row 1: "foreign anchor" stored under a DIFFERENT model string.
+        # The vector itself is identical to what the current mock would
+        # produce — this is the exact failure mode: same bytes, different
+        # space, silently mis-compared without the guard.
+        result_foreign = await mock_provider.embed(texts=["foreign anchor"])
+        s = await app_session_factory(tenant_id)
+        try:
+            await _MR(s).add(
+                organization_id=tenant_id,
+                user_id=user_id,
+                content="foreign anchor",
+                embedding=result_foreign.vectors[0],
+                embedding_model="voyage-3.1-foreign",
+            )
+            await s.commit()
+        finally:
+            await s.close()
+
+        # Row 2: "mock anchor" stored under the CURRENT mock model. Same
+        # space as retrieval queries — legal candidate.
+        await _seed_memory(
+            app_session_factory,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            content="mock anchor",
+            provider=mock_provider,
+        )
+
+        # Query for "foreign anchor" — a perfect vector match for row 1.
+        # With the guard, row 1 is filtered at SQL and never scored.
+        r = await c.post(
+            "/api/v1/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"messages": [{"role": "user", "content": "foreign anchor"}]},
+        )
+        assert r.status_code == 200
+
+    system = _system_content_from(rec.complete_calls)
+    # Either the system context is empty (nothing from the mock space
+    # cleared the similarity floor) or it contains only mock-space rows.
+    # The critical invariant: the foreign row NEVER surfaces.
+    if system is not None:
+        assert "foreign anchor" not in system

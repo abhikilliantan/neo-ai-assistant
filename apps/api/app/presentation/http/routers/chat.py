@@ -134,6 +134,13 @@ async def _retrieve_memory_context(
                 user_id=user_id,
                 query_embedding=query_vec,
                 limit=top_k,
+                # 6k-1: only compare within one vector space. Rows embedded
+                # with a different model live in an incompatible space, and
+                # their cosine distances against a query from THIS model are
+                # noise that drowns out real matches (the 5d demo bug).
+                # search_memory (6c) already applies this guard; retrieval
+                # was the last hole.
+                embedding_model=result.model,
             )
         kept = [(m, sim) for m, sim in hits if sim >= min_similarity]
         log.info(
@@ -278,6 +285,17 @@ async def chat(
         agent_name = DEFAULT_AGENT_NAME
     agent = agents.get(agent_name)
     if agent is None:
+        # 6k-1: stored agent name is not in the current registry (e.g. the
+        # agent was renamed or removed in a code deploy since the row was
+        # written). We fall back to the default so the user isn't locked
+        # out of their own thread, but an operator needs to know — the
+        # stored data still references a ghost.
+        get_logger("chat.agent.fallback").warning(
+            "chat.agent.fallback",
+            missing=agent_name,
+            fallback=DEFAULT_AGENT_NAME,
+            user_id=str(user.id),
+        )
         agent_name = DEFAULT_AGENT_NAME
         agent = agents.get(DEFAULT_AGENT_NAME)
     assert agent is not None, f"built-in default {DEFAULT_AGENT_NAME!r} missing from registry"
@@ -554,6 +572,14 @@ async def chat_stream(
         agent_name = DEFAULT_AGENT_NAME
     agent = agents.get(agent_name)
     if agent is None:
+        # 6k-1: stored agent name absent from the current registry — same
+        # ghost case as /chat above, same fallback + warn shape.
+        get_logger("chat.agent.fallback").warning(
+            "chat.agent.fallback",
+            missing=agent_name,
+            fallback=DEFAULT_AGENT_NAME,
+            user_id=str(user.id),
+        )
         agent_name = DEFAULT_AGENT_NAME
         agent = agents.get(DEFAULT_AGENT_NAME)
     assert agent is not None, f"built-in default {DEFAULT_AGENT_NAME!r} missing from registry"

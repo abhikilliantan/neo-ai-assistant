@@ -816,3 +816,90 @@ async def test_chat_stream_unknown_agent_writes_no_conversation_row(  # type: ig
         )
     assert listing.status_code == 200
     assert listing.json() == []
+
+
+# --- Phase 6k-1: defensive-fallback warn log --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chat_defensive_fallback_warn_fires_and_serves_default(  # type: ignore[no-untyped-def]
+    db_client,
+    app_session_factory,
+    monkeypatch,
+) -> None:
+    """A pre-existing row can hold an agent name that no longer exists in
+    the registry (agent renamed or removed in a code deploy). The 6j
+    defensive fallback swaps in the default so the user keeps working —
+    but an operator needs to know the stored data references a ghost.
+
+    Capture "chat.agent.fallback" warn calls by monkeypatching get_logger
+    on the router module. Assert the turn still 200s on the default.
+    """
+    from uuid import UUID
+
+    import app.presentation.http.routers.chat as chat_router
+    from app.infrastructure.db.repositories import ConversationRepository as _CR
+
+    reg = await db_client.post(
+        "/api/v1/auth/register",
+        json={"email": "6k-fallback@example.com", "password": "password12345"},
+    )
+    assert reg.status_code == 201, reg.text
+    token = reg.json()["access_token"]
+    tenant_id = UUID(reg.json()["active_tenant_id"])
+    user_id = UUID(reg.json()["user_id"])
+
+    # Seed a conversation row that references a ghost agent (never
+    # registered in build_agent_registry).
+    session = await app_session_factory(tenant_id)
+    try:
+        conv = await _CR(session).create(
+            organization_id=tenant_id,
+            user_id=user_id,
+            title="ghost",
+            agent_name="ghost-agent",
+        )
+        await session.commit()
+        conv_id = str(conv.id)
+    finally:
+        await session.close()
+
+    # Intercept get_logger on the router module. The router calls
+    # `get_logger("chat.agent.fallback").warning("chat.agent.fallback", ...)`;
+    # we replace get_logger for that name only (leave others intact) and
+    # record the warning kwargs.
+    warnings: list[dict[str, object]] = []
+    real_get_logger = chat_router.get_logger
+
+    class _CapturingLog:
+        def info(self, *_a: object, **_kw: object) -> None:
+            pass
+
+        def warning(self, event: str, **kwargs: object) -> None:
+            if event == "chat.agent.fallback":
+                warnings.append(kwargs)
+
+    def _fake_get_logger(name: str) -> object:
+        if name == "chat.agent.fallback":
+            return _CapturingLog()
+        return real_get_logger(name)
+
+    monkeypatch.setattr(chat_router, "get_logger", _fake_get_logger)
+
+    # POST with the ghost conversation and NO body.agent — resolver reaches
+    # the stored "ghost-agent", registry.get returns None, warn fires,
+    # fallback to default, turn succeeds.
+    r = await db_client.post(
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "conversation_id": conv_id,
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["agent"] == DEFAULT_AGENT_NAME
+    assert len(warnings) == 1
+    assert warnings[0]["missing"] == "ghost-agent"
+    assert warnings[0]["fallback"] == DEFAULT_AGENT_NAME
+    assert warnings[0]["user_id"] == str(user_id)
