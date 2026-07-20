@@ -28,7 +28,7 @@ from app.application.ports.chat import (
     ChatUsage,
     ToolExecutor,
 )
-from app.application.ports.tools import ToolCall
+from app.application.ports.tools import ToolCall, ToolInvocation
 from app.shared.exceptions.ai import (
     ProviderAPIError,
     ProviderAuthError,
@@ -165,6 +165,11 @@ class AnthropicProvider:
         # iteration — appending to it grows the conversation in place.
         api_messages: list[dict[str, Any]] = kwargs["messages"]
 
+        # Accumulate one ToolInvocation per tool_use we actually run. Surfaced
+        # on the returned ChatCompletion so the /chat handler can pass it to
+        # the client for THIS turn only — never persisted, never reloaded.
+        invocations: list[ToolInvocation] = []
+
         last_response: Any = None
         for _ in range(self._max_tool_iterations + 1):
             try:
@@ -175,7 +180,9 @@ class AnthropicProvider:
 
             stop_reason = getattr(response, "stop_reason", None) or "stop"
             if stop_reason != "tool_use" or tool_executor is None:
-                return self._completion_from(response, finish_reason=stop_reason)
+                completion = self._completion_from(response, finish_reason=stop_reason)
+                completion.tool_invocations = invocations
+                return completion
 
             # Run every tool_use block in this response, collect tool_result blocks.
             tool_result_blocks: list[dict[str, Any]] = []
@@ -188,6 +195,7 @@ class AnthropicProvider:
                     arguments=getattr(block, "input", {}) or {},
                 )
                 result = await tool_executor(call)
+                invocations.append(ToolInvocation(name=call.name, ok=not result.is_error))
                 tr: dict[str, Any] = {
                     "type": "tool_result",
                     "tool_use_id": result.tool_call_id,
@@ -206,7 +214,9 @@ class AnthropicProvider:
         # Fell off the loop — every iteration was tool_use. Return the last
         # response's text with the cap flag; no infinite loops, no more calls.
         assert last_response is not None
-        return self._completion_from(last_response, finish_reason="max_tool_iterations")
+        completion = self._completion_from(last_response, finish_reason="max_tool_iterations")
+        completion.tool_invocations = invocations
+        return completion
 
     async def stream(
         self,
@@ -278,7 +288,12 @@ class AnthropicProvider:
                 )
                 return
 
-            # tool_use turn — run every tool_use block, collect tool_result blocks.
+            # tool_use turn — run every tool_use block, collect tool_result
+            # blocks, and yield a live "tool" frame per invocation so the UI
+            # can render "Neo used X" WHILE the loop runs (6e-1). Tool frames
+            # are surfaced only; the /chat/stream endpoint's accumulator
+            # appends only on type=="delta", so tool frames never enter the
+            # persisted assistant content — the ephemeral invariant holds.
             tool_result_blocks: list[dict[str, Any]] = []
             for block in final.content:
                 if getattr(block, "type", None) != "tool_use":
@@ -289,6 +304,7 @@ class AnthropicProvider:
                     arguments=getattr(block, "input", {}) or {},
                 )
                 result = await tool_executor(call)
+                yield ChatStreamEvent(type="tool", tool_name=call.name, tool_ok=not result.is_error)
                 tr: dict[str, Any] = {
                     "type": "tool_result",
                     "tool_use_id": result.tool_call_id,

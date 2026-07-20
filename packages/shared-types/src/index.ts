@@ -71,15 +71,25 @@ export type ChatRequest = {
   messages: ChatMessage[];
 };
 
+// Tools the provider ran during THIS turn — live UI signal only. Never
+// persisted; reloading a conversation via /conversations/{id} does not
+// carry these. `name` is a stable identifier ("search_memory") that the
+// UI turns into a human label ("Searched your memories"); `ok` is
+// `!is_error` from the tool execution. Arguments are deliberately omitted
+// (a search query can carry sensitive text).
+export type ToolInvocation = { name: string; ok: boolean };
+
 export type ChatResponse = {
   message: ChatMessage;
   model: string;
   usage: ChatUsage | null;
+  // Additive default; omitted / empty array when no tools ran this turn.
+  tool_invocations?: ToolInvocation[];
 };
 
-// SSE frames from POST /api/v1/chat/stream. Backend emits delta/done via the
-// provider; error frames come from the endpoint when a provider raises after
-// headers were sent. Discriminate on `type`.
+// SSE frames from POST /api/v1/chat/stream. Backend emits delta / done / tool
+// via the provider; error frames come from the endpoint when a provider
+// raises after headers were sent. Discriminate on `type`.
 export type ChatStreamMeta = { type: "meta"; conversation_id: string };
 export type ChatStreamDelta = { type: "delta"; content: string };
 export type ChatStreamDone = {
@@ -88,8 +98,12 @@ export type ChatStreamDone = {
   usage: ChatUsage | null;
   finish_reason: string;
 };
+// Fires once per tool the provider ran mid-turn (6e-1). The UI renders a
+// small chip; the frame is NOT accumulated into the assistant content.
+export type ChatStreamTool = { type: "tool"; tool_name: string; tool_ok: boolean };
 export type ChatStreamError = { type: "error"; code: string; message: string };
-export type ChatStreamEvent = ChatStreamMeta | ChatStreamDelta | ChatStreamDone | ChatStreamError;
+export type ChatStreamEvent =
+  ChatStreamMeta | ChatStreamDelta | ChatStreamDone | ChatStreamTool | ChatStreamError;
 
 // --- conversation persistence (mirrors backend /api/v1/conversations) ---
 export type ConversationSummary = {

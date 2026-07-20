@@ -20,7 +20,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from app.application.ports.tools import ToolCall, ToolResult
+from app.application.ports.tools import ToolCall, ToolInvocation, ToolResult
 
 ChatRole = Literal["system", "user", "assistant"]
 
@@ -40,6 +40,10 @@ class ChatCompletion(BaseModel):
     model: str
     usage: ChatUsage | None = None
     finish_reason: str = Field(default="stop")
+    # Tools the provider ran during this turn. Empty list when no tool loop
+    # engaged — additive default keeps the byte-for-byte no-tools shape.
+    # Live-only signal for the UI; never persisted onto message rows.
+    tool_invocations: list[ToolInvocation] = Field(default_factory=list)
 
 
 class ChatStreamEvent(BaseModel):
@@ -47,15 +51,20 @@ class ChatStreamEvent(BaseModel):
 
     Single-type-with-discriminator: `type` selects which fields carry payload.
     `delta` events use `content`; `done` events fill in `model` / `usage` /
-    `finish_reason`. Endpoint-level error frames are emitted as raw JSON
-    (not as ChatStreamEvent) so providers can only ever emit delta/done.
+    `finish_reason`; `tool` events (6e-1) carry `tool_name` / `tool_ok` and
+    fire once per tool the provider ran mid-turn — this is the live "Neo is
+    searching…" signal the UI turns into a small chip. Endpoint-level error
+    frames are emitted as raw JSON (not ChatStreamEvent) so providers can
+    only ever emit delta / done / tool.
     """
 
-    type: Literal["delta", "done"]
+    type: Literal["delta", "done", "tool"]
     content: str = ""
     model: str | None = None
     usage: ChatUsage | None = None
     finish_reason: str | None = None
+    tool_name: str | None = None
+    tool_ok: bool | None = None
 
 
 ToolExecutor = Callable[[ToolCall], Awaitable[ToolResult]]

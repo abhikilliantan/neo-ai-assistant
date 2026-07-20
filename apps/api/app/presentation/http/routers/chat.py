@@ -334,6 +334,7 @@ async def chat(
         message=ChatMessage(role="assistant", content=completion.content),
         model=completion.model,
         usage=completion.usage,
+        tool_invocations=completion.tool_invocations,
     )
 
 

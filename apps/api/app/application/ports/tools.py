@@ -49,6 +49,22 @@ class ToolResult(BaseModel):
     is_error: bool = False
 
 
+class ToolInvocation(BaseModel):
+    """A tool the provider ran during the CURRENT turn — surfaced live to
+    the UI so the user can see "Neo used X". This is view-layer signal only:
+    NEVER persisted onto message rows, NEVER reloaded with history.
+
+    Fields are deliberately minimal — `name` (a stable identifier the UI
+    turns into a human label like "Searched your memories") and `ok`
+    (`not result.is_error`). Arguments are NOT included: a search query
+    string can carry sensitive user text, and the label is enough to tell
+    the story. Add richer fields only when a concrete UI need appears.
+    """
+
+    name: str
+    ok: bool
+
+
 class Tool(Protocol):
     @property
     def name(self) -> str: ...

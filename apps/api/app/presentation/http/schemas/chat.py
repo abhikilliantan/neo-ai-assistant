@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from app.application.ports.chat import ChatMessage, ChatUsage
+from app.application.ports.tools import ToolInvocation
 
 
 class ChatRequest(BaseModel):
@@ -30,6 +31,11 @@ class ChatResponse(BaseModel):
     message: ChatMessage
     model: str
     usage: ChatUsage | None = None
+    # Live signal for the UI: tools the provider ran during THIS turn. Empty
+    # list when no tool loop engaged — additive default keeps the no-tools
+    # response byte-for-byte identical. NEVER persisted; reloading the
+    # conversation via GET /conversations/{id} shows only [user, assistant].
+    tool_invocations: list[ToolInvocation] = Field(default_factory=list)
 
 
 class ConversationSummary(BaseModel):

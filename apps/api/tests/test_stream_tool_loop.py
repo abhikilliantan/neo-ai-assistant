@@ -443,8 +443,10 @@ async def test_anthropic_stream_hits_iteration_cap_and_emits_done_with_max_flag(
     ]
 
     assert stream_mock.call_count == 3
-    # No delta events (all turns were tool_use → silent).
-    assert [e.type for e in events] == ["done"]
+    # No delta events (all turns were tool_use → silent on text). 6e-1 added
+    # a live "tool" frame per invocation, so three tool_use rounds surface as
+    # three "tool" frames followed by the terminal "done" with the cap flag.
+    assert [e.type for e in events] == ["tool", "tool", "tool", "done"]
     assert events[-1].finish_reason == "max_tool_iterations"
 
 
