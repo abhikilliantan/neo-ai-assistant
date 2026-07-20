@@ -1,16 +1,19 @@
 """Chat endpoints — non-streaming (/chat) + streaming (/chat/stream).
 
-Non-streaming holds a tenant-scoped DB session for the whole request (fine —
-short call). The streaming variant deliberately does NOT: it would pin a DB
-connection for the whole LLM response duration, exhausting the pool. Instead
-it opens TWO short bookending tenant write-txns — one BEFORE the stream
-(resolve/create conversation + persist the user message) and one AFTER the
-provider's `done` event (persist the assistant message + touch). Neither
-session is open across the LLM stream.
+BOTH variants use the SAME short-bookending discipline (6k-2 aligned /chat to
+what 4b built for the stream): a short tenant write-txn BEFORE the provider
+call (Txn A — resolve/create conversation + persist the user message), memory
+retrieval in its own short session, the provider call holding NO connection,
+then a short txn AFTER (Txn B — persist the assistant message + touch). No DB
+session is ever held across the multi-second provider round trip, so a pool
+connection is never pinned for it. The 5c memory write runs OFF the response
+path as a FastAPI BackgroundTask on both endpoints.
 
-If the client disconnects mid-stream, the "after" txn simply doesn't run —
-the user question is already saved from the "before" txn, and the assistant
-row is skipped. Acceptable for 4b.
+Provider-failure semantics (LOCKED, both paths): Txn A commits the user
+message before the provider call, so on a provider failure the user turn
+PERSISTS and the assistant turn does not — the user can see their message in
+history and retry without retyping. On /chat/stream, if the client
+disconnects mid-stream the "after" txn simply doesn't run — same outcome.
 """
 
 from __future__ import annotations
@@ -21,15 +24,12 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
 from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner
-from app.ai.tools import (
-    build_request_tool_registry,
-    build_streaming_request_tool_registry,
-)
+from app.ai.tools import build_streaming_request_tool_registry
 from app.ai.tools.search_memory import MemoryRepoFactory
 from app.application.ports.chat import ChatMessage, ChatProvider, ToolExecutor
 from app.application.ports.embeddings import EmbeddingProvider
@@ -45,12 +45,10 @@ from app.infrastructure.logging import get_logger
 from app.presentation.http.deps import (
     AgentRegistryDep,
     CurrentTenantDep,
-    CurrentUserDep,
     EmbeddingProviderDep,
     MemoryExtractorDep,
     SettingsDep,
     StreamingCurrentUserDep,
-    TenantSessionDep,
     get_app_database,
     get_embedding_provider,
     get_memory_extractor,
@@ -191,8 +189,10 @@ async def _extract_and_store_memories(
     Uses input_type="document" for the embedding call. Retrieval (5d) will
     embed the query with input_type="query".
 
-    ENG-BACKLOG: on the non-streaming path this adds extractor+embedding
-    latency to the response. Move to a background task once we have one.
+    6k-2: runs as a FastAPI BackgroundTask on BOTH endpoints — off the
+    response path, so the user never waits on extract+embed. Opens its OWN
+    short tenant session (below) because the request-scoped sessions are all
+    closed by the time this runs.
     """
     log = get_logger("memory.write")
     try:
@@ -236,14 +236,14 @@ async def _extract_and_store_memories(
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
-    user: CurrentUserDep,
+    user: StreamingCurrentUserDep,  # scoped session — no DB connection held
     tenant_id: CurrentTenantDep,
-    session: TenantSessionDep,  # engages SET LOCAL app.current_tenant
     provider: ProviderDep,
     embedding_provider: EmbeddingProviderDep,
     memory_extractor: MemoryExtractorDep,
     settings: SettingsDep,
     agents: AgentRegistryDep,
+    background_tasks: BackgroundTasks,
     db: Annotated[Database, Depends(get_app_database)],
 ) -> ChatResponse:
     if tenant_id is None:
@@ -256,31 +256,28 @@ async def chat(
     if body.agent is not None and agents.get(body.agent) is None:
         raise NotFoundError(f"agent not found: {body.agent!r}")
 
-    conv_repo = ConversationRepository(session)
-    msg_repo = MessageRepository(session)
-
-    if body.conversation_id is not None:
-        conv = await conv_repo.get_by_id(body.conversation_id)
-        if conv is None:
-            raise NotFoundError("conversation not found")
-    else:
-        conv = await conv_repo.create(
-            organization_id=tenant_id,
-            user_id=user.id,
-            title=_title_from(body.messages[-1].content),
-            # 6j: creation-time agent. NULL when the caller didn't pick one,
-            # so the row resolves to whatever DEFAULT_AGENT_NAME is at read
-            # time (survives a future default rename cleanly).
-            agent_name=body.agent,
-        )
+    # --- Txn A: BEFORE the provider call -----------------------------------
+    # 6k-2: same short-bookending discipline as /chat/stream — resolve/create
+    # the conversation + persist the user message in a short txn, then release
+    # the connection. Because this commits before the provider call, a provider
+    # failure below leaves the user message PERSISTED (matches the stream path);
+    # pre-6k-2 the single request session rolled everything back on failure.
+    conv_id, stored_agent = await _persist_user_and_resolve_conversation(
+        db,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        conversation_id=body.conversation_id,
+        user_message=body.messages[-1].content,
+        body_agent=body.agent,
+    )
 
     # Phase 2 (6j): body.agent wins → stored → default. Defensive fallback
     # if a stored name no longer exists in the registry (agent removed in a
     # deploy) — don't lock a user out of their own thread.
     if body.agent is not None:
         agent_name = body.agent
-    elif conv.agent_name is not None:
-        agent_name = conv.agent_name
+    elif stored_agent is not None:
+        agent_name = stored_agent
     else:
         agent_name = DEFAULT_AGENT_NAME
     agent = agents.get(agent_name)
@@ -300,25 +297,12 @@ async def chat(
         agent = agents.get(DEFAULT_AGENT_NAME)
     assert agent is not None, f"built-in default {DEFAULT_AGENT_NAME!r} missing from registry"
 
-    # Continuation with an explicit picker choice that differs from the
-    # stored value → update. Rationale in the 6j report: the picker is
-    # visible and active; the stored value should follow the user's latest
-    # explicit choice rather than silently disagreeing with the UI.
-    if body.agent is not None and conv.agent_name != body.agent:
-        await conv_repo.set_agent(conv.id, body.agent)
-
     get_logger("chat.turn").info("chat.turn", agent=agent_name, user_id=str(user.id))
 
-    await msg_repo.add(
-        organization_id=tenant_id,
-        conversation_id=conv.id,
-        role="user",
-        content=body.messages[-1].content,
-    )
-
-    # Retrieve prior memories BEFORE the provider call. The 5c write for THIS
-    # turn runs AFTER the provider (below), so the just-being-extracted fact
-    # cannot leak into this turn's context.
+    # Retrieve prior memories BEFORE the provider call, in its OWN short
+    # session (released before the provider call). The 5c write for THIS turn
+    # runs AFTER the response as a background task, so the just-being-extracted
+    # fact cannot leak into this turn's context.
     memory_context: str | None = None
     if settings.memory_retrieval_enabled:
         memory_context = await _retrieve_memory_context(
@@ -332,18 +316,17 @@ async def chat(
         )
     augmented = _augment_messages(body.messages, memory_context)
 
-    # Tools: build a PER-REQUEST registry so caller-bound tools (search_memory)
-    # get the current tenant session, embedding provider, and user_id. The
-    # app.state (startup) registry is stateless-baseline only and is NOT
-    # mutated per request. The tool-use loop lives INSIDE the provider —
-    # intermediate tool_use/tool_result turns are ephemeral and never surface
-    # to persistence (only completion.content does).
+    # Tools: 6k-2 — bind search_memory to the SHORT-per-call session factory
+    # (same as /chat/stream) rather than a held request session, so NO DB
+    # connection is pinned across the provider call. The tool-use loop itself
+    # lives INSIDE the provider and is untouched; intermediate tool_use/
+    # tool_result turns stay ephemeral (only completion.content persists).
     tools: list[dict[str, Any]] | None = None
     tool_executor: ToolExecutor | None = None
     if settings.tools_enabled:
-        request_registry = build_request_tool_registry(
+        request_registry = build_streaming_request_tool_registry(
             settings=settings,
-            memory_repo=MemoryRepository(session),
+            memory_repo_factory=_make_streaming_memory_repo_factory(db, tenant_id=tenant_id),
             embedding_provider=embedding_provider,
             organization_id=tenant_id,
             user_id=user.id,
@@ -361,29 +344,30 @@ async def chat(
     if tools is not None and tool_executor is not None:
         tools, tool_executor = runner.filter_tools(tools, tool_executor)
 
+    # Provider call holding NO DB connection.
     completion = await provider.complete(
         messages=augmented,
         tools=tools,
         tool_executor=tool_executor,
     )
 
-    prompt_tokens, completion_tokens = _usage_tokens(completion.usage)
-    await msg_repo.add(
-        organization_id=tenant_id,
-        conversation_id=conv.id,
-        role="assistant",
+    # --- Txn B: AFTER the provider call ------------------------------------
+    # Fresh short session, persist the assistant message + touch.
+    await _persist_assistant_and_touch(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conv_id,
         content=completion.content,
         model=completion.model,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
+        usage=completion.usage,
         finish_reason=completion.finish_reason,
     )
-    await conv_repo.touch(conv.id)
 
-    # Best-effort memory write. Opens its OWN short tenant session, never
-    # raises, adds extraction+embedding latency to the response (backlog:
-    # move behind a background task).
-    await _extract_and_store_memories(
+    # 5c memory write — OFF the response path (6k-2). Scheduled as a background
+    # task so the user never waits on extract+embed. It opens its OWN short
+    # tenant session and stays best-effort (never raises — see the function).
+    background_tasks.add_task(
+        _extract_and_store_memories,
         db,
         embedding_provider,
         memory_extractor,
@@ -394,7 +378,7 @@ async def chat(
     )
 
     return ChatResponse(
-        conversation_id=conv.id,
+        conversation_id=conv_id,
         message=ChatMessage(role="assistant", content=completion.content),
         model=completion.model,
         usage=completion.usage,
@@ -538,6 +522,7 @@ async def chat_stream(
     memory_extractor: Annotated[MemoryExtractor, Depends(get_memory_extractor)],
     settings: SettingsDep,
     agents: AgentRegistryDep,
+    background_tasks: BackgroundTasks,
 ) -> StreamingResponse:
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
@@ -676,12 +661,15 @@ async def chat_stream(
             finish_reason=done_finish_reason,
         )
 
-        # --- Txn C: memory write (best-effort) -----------------------------
-        # Happens AFTER the done frame was yielded, so it never delays the
-        # visible answer. If the client already disconnected, generator
-        # cancellation skips this — assistant + conversation are already
-        # persisted by Txn B, so no data is lost.
-        await _extract_and_store_memories(
+        # 5c memory write — OFF the response path (6k-2). Scheduled here (once
+        # assistant_content is known) as a background task; Starlette runs it
+        # AFTER the stream body closes, so it never delays the visible answer
+        # NOR keeps the response open. If the provider errored or emitted no
+        # `done`, we returned above and never scheduled it — assistant +
+        # conversation are already persisted by Txn B, so no data is lost.
+        # Opens its OWN short tenant session; stays best-effort (never raises).
+        background_tasks.add_task(
+            _extract_and_store_memories,
             db,
             embedding_provider,
             memory_extractor,
@@ -699,4 +687,8 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },
+        # Attach the request's BackgroundTasks explicitly: the 5c task is
+        # appended from inside the generator above, and Starlette reads
+        # `background.tasks` after the body completes.
+        background=background_tasks,
     )
