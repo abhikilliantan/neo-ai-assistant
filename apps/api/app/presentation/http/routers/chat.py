@@ -347,7 +347,13 @@ async def chat(
     # Apply the (already-resolved) agent's persona + tool filter to the
     # provider-call inputs. Default "assistant" is identity on both — pre-6h
     # byte-compat. See AgentRunner for the transparency argument.
-    runner = AgentRunner(agent)
+    runner = AgentRunner(
+        agent,
+        workflow_names=frozenset(workflow_registry.list_names()),
+        # 7d: actor recorded EXPLICITLY on every workflow audit line.
+        user_id=str(user.id),
+        org_id=str(tenant_id),
+    )
     augmented = runner.prepare_messages(augmented)
     if tools is not None and tool_executor is not None:
         tools, tool_executor = runner.filter_tools(tools, tool_executor)
@@ -621,7 +627,13 @@ async def chat_stream(
 
     # Apply the (already-resolved) agent's persona + tool filter. Default
     # "assistant" is identity on both — pre-6h byte-compat.
-    runner = AgentRunner(agent)
+    runner = AgentRunner(
+        agent,
+        workflow_names=frozenset(workflow_registry.list_names()),
+        # 7d: actor recorded EXPLICITLY on every workflow audit line.
+        user_id=str(user.id),
+        org_id=str(tenant_id),
+    )
     augmented = runner.prepare_messages(augmented)
     if tools is not None and tool_executor is not None:
         tools, tool_executor = runner.filter_tools(tools, tool_executor)

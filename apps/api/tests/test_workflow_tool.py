@@ -311,7 +311,11 @@ async def test_chat_runs_workflow_via_loop_and_folds_result(
         r = await c.post(
             "/api/v1/chat",
             headers={"Authorization": f"Bearer {token}"},
-            json={"messages": [{"role": "user", "content": "make a task"}]},
+            # 7d: workflows require the operator agent (deliberate consent).
+            json={
+                "agent": "operator",
+                "messages": [{"role": "user", "content": "make a task"}],
+            },
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -349,7 +353,11 @@ async def test_chat_stream_runs_workflow_and_emits_tool_frame(
         r = await c.post(
             "/api/v1/chat/stream",
             headers={"Authorization": f"Bearer {token}"},
-            json={"messages": [{"role": "user", "content": "make a task"}]},
+            # 7d: workflows require the operator agent.
+            json={
+                "agent": "operator",
+                "messages": [{"role": "user", "content": "make a task"}],
+            },
         )
         assert r.status_code == 200
         events = _parse_sse(r.text)
@@ -491,7 +499,11 @@ async def test_workflows_enabled_false_keeps_tools_but_drops_workflows_on_both_p
     path: str,
 ) -> None:
     db_app.state.settings = db_app.state.settings.model_copy(update={"workflows_enabled": False})
-    seen = await _tools_seen_for_turn(db_app, path=path, email=f"7b-nowf-{len(path)}@example.com")
+    # Use operator (which WOULD receive create_task) so create_task's absence
+    # proves the kill switch, not just the default agent's read-only filter (7d).
+    seen = await _tools_seen_for_turn(
+        db_app, path=path, email=f"7b-nowf-{len(path)}@example.com", agent="operator"
+    )
     assert seen is not None
     names = {s["name"] for s in seen}
     assert "create_task" not in names  # workflow specs withheld

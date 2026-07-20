@@ -106,17 +106,17 @@ def test_registry_duplicate_register_raises() -> None:
 
 
 def test_build_agent_registry_registers_default_assistant() -> None:
-    registry = build_agent_registry(_base())
+    registry = build_agent_registry(_base(), workflow_names=["create_task"])
     assert isinstance(registry, AgentRegistry)
-    # 6h adds the "recall" persona; registration order is [assistant, recall].
-    assert registry.list_names() == ["assistant", "recall"]
+    # 7d adds the "operator" persona; order is [assistant, recall, operator].
+    assert registry.list_names() == ["assistant", "recall", "operator"]
 
     assistant = registry.get("assistant")
     assert assistant is not None
-    # Byte-compat precondition for 6g's wire-up.
     assert assistant.system_prompt == ""
-    assert assistant.tool_names is None
-    assert assistant.description == "General-purpose Neo assistant."
+    # 7d: default agent is READ-ONLY now — no None, no workflow.
+    assert assistant.tool_names == ["echo", "search_memory"]
+    assert "create_task" not in (assistant.tool_names or [])
 
     # 6h: recall persona exercises BOTH persona injection and tool subset.
     recall = registry.get("recall")
@@ -124,6 +124,14 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     assert recall.description == "Answers from what you've told Neo before."
     assert recall.system_prompt.startswith("You are Neo's recall specialist.")
     assert recall.tool_names == ["search_memory"]
+
+    # 7d: operator owns workflows — read-only tools PLUS every workflow name.
+    operator = registry.get("operator")
+    assert operator is not None
+    assert operator.tool_names == ["echo", "search_memory", "create_task"]
+    assert operator.system_prompt.startswith("You are Neo in operator mode.")
+    # Its description reads like a consent prompt (shown in the picker).
+    assert "actions" in operator.description.lower()
 
 
 # --- lifespan wiring: app builds with agent_registry on state ---------------
@@ -194,6 +202,6 @@ async def test_lifespan_logs_agents_line(monkeypatch: pytest.MonkeyPatch) -> Non
     async with main_mod.lifespan(app):
         pass
 
-    assert captured.get("agents") == "assistant,recall"
+    assert captured.get("agents") == "assistant,recall,operator"
     # Sanity: existing "tools" line still carried too (no regression).
     assert "tools" in captured

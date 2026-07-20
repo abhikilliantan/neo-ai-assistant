@@ -436,8 +436,8 @@ async def test_list_agents_returns_only_name_and_description(db_client) -> None:
     )
     assert r.status_code == 200
     body = r.json()
-    # Registration order: assistant then recall.
-    assert [a["name"] for a in body] == ["assistant", "recall"]
+    # Registration order: assistant, recall, then operator (7d).
+    assert [a["name"] for a in body] == ["assistant", "recall", "operator"]
     for item in body:
         assert set(item.keys()) == {"name", "description"}
         # Belt-and-braces: even if keys() ever grew, these two must never appear.

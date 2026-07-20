@@ -267,12 +267,15 @@ async def db_app(
     app.state.embedding_provider = MockEmbeddingProvider()
     app.state.memory_extractor = MockMemoryExtractor()
     app.state.tool_registry = build_tool_registry(settings)
-    app.state.agent_registry = build_agent_registry(settings)
     # 7a: pin the mock workflow client + registry — the CI/test default, same
-    # posture as the mock chat/embedding providers above. No route consumes
-    # them yet (7b wires workflows into the tool loop).
+    # posture as the mock chat/embedding providers above.
     app.state.workflow_client = MockWorkflowClient()
-    app.state.workflow_registry = build_workflow_registry(settings)
+    workflow_registry = build_workflow_registry(settings)
+    app.state.workflow_registry = workflow_registry
+    # 7d: operator agent's permissions derive from the live workflow set.
+    app.state.agent_registry = build_agent_registry(
+        settings, workflow_names=workflow_registry.list_names()
+    )
     yield app
 
 

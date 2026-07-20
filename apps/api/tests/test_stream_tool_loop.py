@@ -179,15 +179,11 @@ async def test_stream_runs_search_memory_via_short_session_factory_and_folds_int
         # tool_use round was silent (the scripted double did not emit deltas
         # before calling the executor).
         assert "Priya" in joined
-        # And endpoint saw stateless + streaming tools + the workflow-as-tool.
-        # 7b merged create_task (from the pinned mock workflow registry) into
-        # the same tool set — WORKFLOWS ARE TOOLS.
+        # Endpoint saw the read-only tools. 7d: the DEFAULT agent no longer
+        # receives create_task (workflows require the operator agent), so the
+        # tool set here is echo + search_memory only.
         assert scripted.tools_seen[-1] is not None
-        assert {s["name"] for s in scripted.tools_seen[-1]} == {
-            "echo",
-            "search_memory",
-            "create_task",
-        }
+        assert {s["name"] for s in scripted.tools_seen[-1]} == {"echo", "search_memory"}
         assert scripted.executor_seen[-1] is not None
 
         # Ephemeral guarantee still holds on the stream path.
@@ -547,10 +543,6 @@ async def test_chat_stream_tools_enabled_true_passes_registered_specs(
         assert r.status_code == 200
 
     assert spy.calls[-1]["tools"] is not None
-    # 7b: create_task (workflow-as-tool) joins the merged tool set.
-    assert {s["name"] for s in spy.calls[-1]["tools"]} == {
-        "echo",
-        "search_memory",
-        "create_task",
-    }
+    # 7d: the default agent is read-only — create_task is NOT offered here.
+    assert {s["name"] for s in spy.calls[-1]["tools"]} == {"echo", "search_memory"}
     assert spy.calls[-1]["tool_executor"] is not None

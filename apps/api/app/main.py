@@ -46,9 +46,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedding_provider = build_embedding_provider(settings)  # fail-fast if misconfigured
     memory_extractor = build_memory_extractor(settings, chat_provider)
     tool_registry = build_tool_registry(settings)
-    agent_registry = build_agent_registry(settings)
     workflow_client = build_workflow_client(settings)  # fail-fast if misconfigured
     workflow_registry = build_workflow_registry(settings)
+    # 7d: the "operator" agent's permissions derive from the live workflow set.
+    agent_registry = build_agent_registry(settings, workflow_names=workflow_registry.list_names())
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),

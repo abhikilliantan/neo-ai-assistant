@@ -45,6 +45,34 @@ def _stateless_tools() -> list[Tool]:
     return [EchoTool()]
 
 
+# 7d: the SINGLE source of truth for which tools are READ-ONLY (no external
+# side effect). Built-in agents derive their allow-lists from this set plus the
+# workflow registry (workflows are the side-effecting set by construction), so:
+#   - a new READ-ONLY tool must be named here, or `_assert_all_tools_classified`
+#     raises at build time — it can never silently fail to reach the read agents;
+#   - a new WORKFLOW reaches ONLY the workflow-capable agent (operator), never
+#     the default read-only agent, with no edit here.
+# Keep this in lockstep with what the request builders register below.
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({"echo", "search_memory"})
+
+
+def _assert_all_tools_classified(
+    registry: ToolRegistry, workflow_registry: WorkflowRegistry
+) -> None:
+    """Fail loudly if a registered tool is neither classified read-only nor a
+    workflow (7d). 7d agents derive their permissions from this split, so an
+    unclassified tool would silently reach the wrong agents — refuse to build.
+    """
+    classified = READ_ONLY_TOOL_NAMES | set(workflow_registry.list_names())
+    unknown = sorted({spec["name"] for spec in registry.specs()} - classified)
+    if unknown:
+        raise RuntimeError(
+            f"unclassified tool(s) {unknown}: add to READ_ONLY_TOOL_NAMES "
+            "(app/ai/tools) or register as a workflow. 7d built-in agents derive "
+            "their allow-lists from this classification."
+        )
+
+
 def _merge_workflow_tools(
     registry: ToolRegistry,
     workflow_registry: WorkflowRegistry,
@@ -154,10 +182,14 @@ def build_streaming_request_tool_registry(
     )
     if settings.workflows_enabled:
         _merge_workflow_tools(registry, workflow_registry, workflow_client)
+    # 7d: every tool that reaches the model must be classified (read-only or
+    # workflow) so the built-in agents' permissions stay correct as tools grow.
+    _assert_all_tools_classified(registry, workflow_registry)
     return registry
 
 
 __all__ = [
+    "READ_ONLY_TOOL_NAMES",
     "EchoTool",
     "MemoryRepoFactory",
     "SearchMemoryTool",
