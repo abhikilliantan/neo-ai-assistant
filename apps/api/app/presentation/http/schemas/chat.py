@@ -14,6 +14,11 @@ from app.application.ports.tools import ToolInvocation
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     conversation_id: UUID | None = None
+    # Optional agent name (6h). Omitted / null → the default "assistant"
+    # agent (byte-for-byte pre-6h behavior). Unknown names surface as a
+    # 404 from the endpoint — we can't statically validate here because the
+    # valid set lives in the runtime registry.
+    agent: str | None = None
 
     @field_validator("messages")
     @classmethod

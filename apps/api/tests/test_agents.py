@@ -108,7 +108,8 @@ def test_registry_duplicate_register_raises() -> None:
 def test_build_agent_registry_registers_default_assistant() -> None:
     registry = build_agent_registry(_base())
     assert isinstance(registry, AgentRegistry)
-    assert registry.list_names() == ["assistant"]
+    # 6h adds the "recall" persona; registration order is [assistant, recall].
+    assert registry.list_names() == ["assistant", "recall"]
 
     assistant = registry.get("assistant")
     assert assistant is not None
@@ -116,6 +117,13 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     assert assistant.system_prompt == ""
     assert assistant.tool_names is None
     assert assistant.description == "General-purpose Neo assistant."
+
+    # 6h: recall persona exercises BOTH persona injection and tool subset.
+    recall = registry.get("recall")
+    assert recall is not None
+    assert recall.description == "Answers from what you've told Neo before."
+    assert recall.system_prompt.startswith("You are Neo's recall specialist.")
+    assert recall.tool_names == ["search_memory"]
 
 
 # --- lifespan wiring: app builds with agent_registry on state ---------------
@@ -141,7 +149,7 @@ def test_create_app_leaves_state_agent_registry_uninitialized_until_lifespan() -
     assert not hasattr(app.state, "agent_registry")
 
 
-# --- startup log includes agents="assistant" -------------------------------
+# --- startup log includes agents="assistant,recall" ------------------------
 
 
 @pytest.mark.asyncio
@@ -186,6 +194,6 @@ async def test_lifespan_logs_agents_line(monkeypatch: pytest.MonkeyPatch) -> Non
     async with main_mod.lifespan(app):
         pass
 
-    assert captured.get("agents") == "assistant"
+    assert captured.get("agents") == "assistant,recall"
     # Sanity: existing "tools" line still carried too (no regression).
     assert "tools" in captured

@@ -23,13 +23,29 @@ from app.infrastructure.config import Settings
 
 
 def _built_in_agents() -> list[AgentDefinition]:
-    """Baseline agent set — defined in exactly one place."""
+    """Baseline agent set — defined in exactly one place.
+
+    "recall" (6h): the first non-default persona. Exercises both persona
+    injection (non-empty system_prompt) and tool-subset filtering
+    (tool_names=["search_memory"] excludes echo). Demoable end-to-end on the
+    real stack — search-then-answer grounded in the user's stored memories.
+    """
     return [
         AgentDefinition(
             name="assistant",
             description="General-purpose Neo assistant.",
             system_prompt="",
             tool_names=None,
+        ),
+        AgentDefinition(
+            name="recall",
+            description="Answers from what you've told Neo before.",
+            system_prompt=(
+                "You are Neo's recall specialist. Before answering, search the "
+                "user's saved memories and ground your answer in what you find. "
+                "If nothing relevant is stored, say so plainly rather than guessing."
+            ),
+            tool_names=["search_memory"],
         ),
     ]
 

@@ -242,6 +242,17 @@ async def chat(
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
 
+    # Resolve the agent FIRST (6h). Bogus name → 404 before any side effect:
+    # no conversation created, no user message persisted, no embedding call
+    # for retrieval, no tool-registry build. The tenant session dep would
+    # roll back a failed txn on /chat anyway, but early-return keeps the
+    # behavior aligned with /chat/stream (which commits Txn A eagerly).
+    agent_name = body.agent or DEFAULT_AGENT_NAME
+    agent = agents.get(agent_name)
+    if agent is None:
+        raise NotFoundError(f"agent not found: {agent_name!r}")
+    get_logger("chat.turn").info("chat.turn", agent=agent_name, user_id=str(user.id))
+
     conv_repo = ConversationRepository(session)
     msg_repo = MessageRepository(session)
 
@@ -300,12 +311,9 @@ async def chat(
             tools = specs
             tool_executor = request_registry.execute
 
-    # Agent seam (6g): the default "assistant" agent contributes an empty
-    # persona (system_prompt="") and no tool subset (tool_names=None), so
-    # both calls below are identity transforms — byte-for-byte compat with
-    # pre-6g behavior. Request-driven agent SELECTION arrives in 6h.
-    agent = agents.get(DEFAULT_AGENT_NAME)
-    assert agent is not None, f"built-in agent {DEFAULT_AGENT_NAME!r} missing from registry"
+    # Apply the (already-resolved) agent's persona + tool filter to the
+    # provider-call inputs. Default "assistant" is identity on both — pre-6h
+    # byte-compat. See AgentRunner for the transparency argument.
     runner = AgentRunner(agent)
     augmented = runner.prepare_messages(augmented)
     if tools is not None and tool_executor is not None:
@@ -475,6 +483,17 @@ async def chat_stream(
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
 
+    # Resolve the agent FIRST (6h) — BEFORE Txn A eagerly persists the user
+    # message and BEFORE we return StreamingResponse. Unknown → NotFoundError
+    # bubbles to the existing exception handler → clean JSON 404 envelope,
+    # NOT a mid-stream error frame. Same discipline as the 4b conversation-
+    # not-found 404 raised before the stream is opened.
+    agent_name = body.agent or DEFAULT_AGENT_NAME
+    agent = agents.get(agent_name)
+    if agent is None:
+        raise NotFoundError(f"agent not found: {agent_name!r}")
+    get_logger("chat.turn").info("chat.turn", agent=agent_name, user_id=str(user.id))
+
     # --- Txn A: BEFORE the stream ------------------------------------------
     # Resolve/create conversation + persist the user message in a short txn,
     # then release the connection. Errors here (NotFoundError, provider
@@ -524,12 +543,8 @@ async def chat_stream(
             tools = specs
             tool_executor = streaming_registry.execute
 
-    # Agent seam (6g): same shape as /chat above — default agent contributes
-    # an identity transform on both messages and tools, so the streamed frames
-    # stay byte-for-byte identical to pre-6g. Request-driven agent SELECTION
-    # arrives in 6h.
-    agent = agents.get(DEFAULT_AGENT_NAME)
-    assert agent is not None, f"built-in agent {DEFAULT_AGENT_NAME!r} missing from registry"
+    # Apply the (already-resolved) agent's persona + tool filter. Default
+    # "assistant" is identity on both — pre-6h byte-compat.
     runner = AgentRunner(agent)
     augmented = runner.prepare_messages(augmented)
     if tools is not None and tool_executor is not None:

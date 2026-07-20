@@ -296,3 +296,159 @@ async def test_chat_stream_default_agent_is_transparent(db_app) -> None:  # type
     seen_names = {s["name"] for s in spy_provider.last_tools}
     assert "echo" in seen_names
     assert "search_memory" in seen_names
+
+
+# --- Phase 6h: request-driven selection ("recall" persona + tool subset) ----
+
+_RECALL_PERSONA = (
+    "You are Neo's recall specialist. Before answering, search the user's "
+    "saved memories and ground your answer in what you find. If nothing "
+    "relevant is stored, say so plainly rather than guessing."
+)
+
+
+@pytest.mark.asyncio
+async def test_chat_recall_agent_injects_persona_and_filters_tools(db_app) -> None:  # type: ignore[no-untyped-def]
+    """/chat with agent="recall":
+    - leading system message is EXACTLY the recall persona (ahead of any
+      memory system message — memory is empty for a fresh user, but the
+      persona is still the first message);
+    - tool specs are filtered to ["search_memory"] only (echo absent).
+    """
+    spy_provider = _RecordingProvider()
+    db_app.state.chat_provider = spy_provider
+
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "spy-recall-chat@example.com")
+        r = await c.post(
+            "/api/v1/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "agent": "recall",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert r.status_code == 200, r.text
+
+    assert spy_provider.last_messages is not None
+    assert spy_provider.last_messages[0] == ChatMessage(role="system", content=_RECALL_PERSONA)
+    # No memories for the fresh user → only the persona + the user turn.
+    assert spy_provider.last_messages[1:] == [ChatMessage(role="user", content="hi")]
+
+    assert spy_provider.last_tools is not None
+    assert [s["name"] for s in spy_provider.last_tools] == ["search_memory"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_recall_agent_injects_persona_and_filters_tools(  # type: ignore[no-untyped-def]
+    db_app,
+) -> None:
+    """Same recall-agent assertions on the streaming path."""
+    spy_provider = _RecordingProvider()
+    db_app.state.chat_provider = spy_provider
+
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "spy-recall-stream@example.com")
+        r = await c.post(
+            "/api/v1/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "agent": "recall",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert r.status_code == 200, r.text
+    assert spy_provider.streamed is True
+
+    assert spy_provider.last_messages is not None
+    assert spy_provider.last_messages[0] == ChatMessage(role="system", content=_RECALL_PERSONA)
+    assert spy_provider.last_messages[1:] == [ChatMessage(role="user", content="hi")]
+
+    assert spy_provider.last_tools is not None
+    assert [s["name"] for s in spy_provider.last_tools] == ["search_memory"]
+
+
+# --- Phase 6h: unknown agent → 404, never a stream frame -------------------
+
+
+@pytest.mark.asyncio
+async def test_chat_unknown_agent_returns_404_envelope(db_app) -> None:  # type: ignore[no-untyped-def]
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "unknown-agent-chat@example.com")
+        r = await c.post(
+            "/api/v1/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "agent": "does-not-exist",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert r.status_code == 404
+    body = r.json()
+    assert body["error"]["code"] == "not_found"
+    assert "agent" in body["error"]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_unknown_agent_returns_json_404_not_sse_frame(  # type: ignore[no-untyped-def]
+    db_app,
+) -> None:
+    """CRITICAL: the stream must reject the unknown agent BEFORE it opens the
+    SSE response — the client gets a plain JSON 404, NOT a `data:` error frame.
+    Same discipline as the 4b conversation-not-found 404.
+    """
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = await _register_and_token(c, "unknown-agent-stream@example.com")
+        r = await c.post(
+            "/api/v1/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "agent": "does-not-exist",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert r.status_code == 404
+    # Plain JSON envelope, NOT text/event-stream — proves we short-circuited
+    # before StreamingResponse was returned.
+    assert r.headers["content-type"].startswith("application/json")
+    assert "data:" not in r.text
+    body = r.json()
+    assert body["error"]["code"] == "not_found"
+
+
+# --- Phase 6h: GET /api/v1/agents whitelist -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_agents_returns_only_name_and_description(db_client) -> None:  # type: ignore[no-untyped-def]
+    """The listing must NOT leak system_prompt (prompt-engineering IP +
+    jailbreak surface) or tool_names (internal policy). Whitelist is
+    enforced structurally by AgentOut — this test guards the contract.
+    """
+    token = await _register_and_token(db_client, "agents-list@example.com")
+    r = await db_client.get(
+        "/api/v1/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # Registration order: assistant then recall.
+    assert [a["name"] for a in body] == ["assistant", "recall"]
+    for item in body:
+        assert set(item.keys()) == {"name", "description"}
+        # Belt-and-braces: even if keys() ever grew, these two must never appear.
+        assert "system_prompt" not in item
+        assert "tool_names" not in item
+    recall = next(a for a in body if a["name"] == "recall")
+    assert recall["description"] == "Answers from what you've told Neo before."
+
+
+@pytest.mark.asyncio
+async def test_list_agents_requires_bearer_token(db_client) -> None:  # type: ignore[no-untyped-def]
+    r = await db_client.get("/api/v1/agents")
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "authentication_failed"

@@ -24,6 +24,7 @@ from app.infrastructure.db import build_database, build_system_database
 from app.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
 from app.infrastructure.logging import configure_logging, get_logger
 from app.presentation.http.routers import (
+    agents_router,
     auth_router,
     chat_router,
     conversations_router,
@@ -121,6 +122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat_router)
     app.include_router(conversations_router)
     app.include_router(memories_router)
+    app.include_router(agents_router)
     return app
 
 
