@@ -34,6 +34,11 @@ class FixedSizeChunker:
         self._chunk_size = chunk_size
         self._overlap = overlap
 
+    @property
+    def chunker_id(self) -> str:
+        # name+version, persisted per row for provenance (ADR 0001 Decision 8).
+        return "fixed-1"
+
     def chunk(self, *, document_id: str, document: ParsedDocument) -> list[DocumentChunk]:
         full = document.full_text
         if not full:

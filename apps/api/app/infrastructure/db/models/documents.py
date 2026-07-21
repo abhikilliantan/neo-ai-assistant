@@ -97,6 +97,12 @@ class DocumentChunk(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSION), nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(64), nullable=False)
+    # ADR 0001 Decision 8: which chunker cut this row, name+version ("fixed-1",
+    # "block-aware-1"), mirroring embedding_model. Recorded only — retrieval
+    # never filters by it (mixing chunkers is merely inconsistent, not wrong; a
+    # filter would silently hide half the corpus). Nullable; a NULL is read as
+    # "fixed" (legacy rows predate this column; the migration backfills them).
+    chunker: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Provenance (8a DocumentPosition). char offsets mandatory; the rest nullable
     # rather than faked — page only for paginated formats, section a best-effort hint.
     char_start: Mapped[int] = mapped_column(Integer, nullable=False)

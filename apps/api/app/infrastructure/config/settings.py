@@ -130,6 +130,13 @@ class Settings(BaseSettings):
     # TOKENS (≈ 4 chars/token) — keep chunk_size well under the model cap.
     document_chunk_size: int = 1000
     document_chunk_overlap: int = 200
+    # ADR 0001: chunker selection. "fixed" (default) = fixed-size char window;
+    # "block_aware" packs whole ParsedBlocks on paragraph/section boundaries.
+    # Default stays "fixed" so CI and the V1 benchmark baseline are unchanged
+    # until block_aware passes the retrieval benchmark (ADR 0001 Decision 7).
+    # chunk_size/overlap are shared by both (overlap = whole-block carry budget
+    # for block_aware, Decision 3).
+    document_chunker: Literal["fixed", "block_aware"] = "fixed"
     # Resource limits on UNTRUSTED uploads (8c enforces at the route; the parser
     # enforces max_bytes now). Timeout is enforced by the CALLER via
     # asyncio.wait_for — a parser can't reliably self-timeout mid-CPU-work.

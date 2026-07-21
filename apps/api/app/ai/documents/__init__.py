@@ -15,6 +15,7 @@ Nothing consumes either yet — 8a is the contracts/mock slice; 8c wires ingest.
 
 from __future__ import annotations
 
+from app.ai.documents.block_aware import BlockAwareChunker
 from app.ai.documents.chunker import FixedSizeChunker
 from app.ai.documents.dispatch import ContentTypeDocumentParser
 from app.ai.documents.ingest import (
@@ -50,13 +51,21 @@ def build_document_parser(settings: Settings) -> DocumentParser:
 
 
 def build_chunker(settings: Settings) -> Chunker:
-    """The fixed-size chunker, configured from settings. Bad size/overlap fail
-    at construction (FixedSizeChunker validates).
+    """Select the chunker from settings.document_chunker (ADR 0001 Decision 7).
+    "fixed" (default) and "block_aware" share chunk_size/overlap; both validate
+    size/overlap at construction. Fail-fast on the unknown branch.
     """
-    return FixedSizeChunker(
-        chunk_size=settings.document_chunk_size,
-        overlap=settings.document_chunk_overlap,
-    )
+    if settings.document_chunker == "fixed":
+        return FixedSizeChunker(
+            chunk_size=settings.document_chunk_size,
+            overlap=settings.document_chunk_overlap,
+        )
+    if settings.document_chunker == "block_aware":
+        return BlockAwareChunker(
+            chunk_size=settings.document_chunk_size,
+            overlap=settings.document_chunk_overlap,
+        )
+    raise RuntimeError(f"Unknown DOCUMENT_CHUNKER: {settings.document_chunker!r}")
 
 
 def build_document_ingest_service(
@@ -79,6 +88,7 @@ def build_document_ingest_service(
 
 
 __all__ = [
+    "BlockAwareChunker",
     "ContentTypeDocumentParser",
     "DocumentIngestService",
     "FixedSizeChunker",

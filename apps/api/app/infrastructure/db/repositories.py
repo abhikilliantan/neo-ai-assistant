@@ -362,9 +362,11 @@ class DocumentRepository:
         chunks: list[DocumentChunkVO],
         vectors: list[list[float]],
         embedding_model: str,
+        chunker: str,
     ) -> list[DocumentChunk]:
         """Insert all chunk rows in one unit of work. `strict=True` refuses a
         chunk/vector count mismatch loudly rather than persisting a skewed set.
+        `chunker` is the algorithm's name+version (ADR 0001 Decision 8).
         """
         rows: list[DocumentChunk] = []
         for chunk, vector in zip(chunks, vectors, strict=True):
@@ -375,6 +377,7 @@ class DocumentRepository:
                 text=chunk.text,
                 embedding=vector,
                 embedding_model=embedding_model,
+                chunker=chunker,
                 char_start=chunk.position.char_start,
                 char_end=chunk.position.char_end,
                 page_start=chunk.position.page_start,

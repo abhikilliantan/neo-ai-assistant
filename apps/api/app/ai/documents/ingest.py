@@ -119,5 +119,6 @@ class DocumentIngestService:
                 chunks=chunks,
                 vectors=result.vectors,
                 embedding_model=result.model,
+                chunker=self._chunker.chunker_id,
             )
         return document

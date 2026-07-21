@@ -138,4 +138,11 @@ class Chunker(Protocol):
     is citable in isolation.
     """
 
+    @property
+    def chunker_id(self) -> str:
+        """Name+version of the algorithm (e.g. "fixed-1", "block-aware-1"),
+        persisted per chunk row for provenance (ADR 0001 Decision 8). Recorded,
+        never used to filter retrieval."""
+        ...
+
     def chunk(self, *, document_id: str, document: ParsedDocument) -> list[DocumentChunk]: ...

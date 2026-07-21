@@ -242,6 +242,14 @@ def test_build_chunker_returns_configured_fixed_chunker() -> None:
     assert [(c.position.char_start, c.position.char_end) for c in chunks] == [(0, 100), (75, 130)]
 
 
+def test_build_chunker_selects_block_aware() -> None:
+    # ADR 0001 Decision 7: default stays fixed; block_aware selectable by config.
+    from app.ai.documents import BlockAwareChunker
+
+    assert isinstance(build_chunker(_base()), FixedSizeChunker)  # default unchanged
+    assert isinstance(build_chunker(_base(document_chunker="block_aware")), BlockAwareChunker)
+
+
 # --- kill switch: inert this slice ------------------------------------------
 
 
