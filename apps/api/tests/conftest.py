@@ -255,6 +255,10 @@ async def db_app(
         ai_provider="mock",
         embedding_provider="mock",
         memory_extractor="mock",
+        # Opt into the fabricating mock parser for tests/CI (default is "reject",
+        # which 415s pdf/docx). Pinned like the other mock providers above so
+        # endpoint PDF uploads stay deterministic regardless of env leakage.
+        document_parser="mock",
     )
     app = create_app(settings)
     system_sm = async_sessionmaker(db_engine, expire_on_commit=False)

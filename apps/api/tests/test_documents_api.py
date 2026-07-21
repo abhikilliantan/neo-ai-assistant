@@ -209,6 +209,39 @@ class _BoomEmbeddingProvider:
 
 
 @pytest.mark.asyncio
+async def test_upload_unsupported_type_rejected_with_415_not_fabricated(
+    db_app: FastAPI, db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Production default ("reject"): pdf/docx have no real parser → 415 with a
+    # message naming what's supported, and NO document/chunks are fabricated.
+    from app.ai.documents.dispatch import ContentTypeDocumentParser
+    from app.ai.documents.text import TextDocumentParser
+
+    db_app.state.document_ingest = DocumentIngestService(
+        parser=ContentTypeDocumentParser(
+            text_parser=TextDocumentParser(max_bytes=1_000_000), fallback=None
+        ),
+        chunker=FixedSizeChunker(chunk_size=1000, overlap=200),
+        embedding_provider=MockEmbeddingProvider(),
+        chunk_size=1000,
+        embedding_model="voyage-3.5",
+    )
+    reg = await _register(db_client, "alice@reject8.example")
+    r = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("paper.pdf", b"%PDF-1.7 anything", _PDF)},
+        headers=_auth(reg),
+    )
+    assert r.status_code == 415, r.text
+    body = r.json()
+    assert body["error"]["code"] == "unsupported_content_type"
+    assert "PDF and Word" in body["error"]["message"]  # names what's supported / coming
+
+    doc_n = (await db_session.execute(select(func.count()).select_from(Document))).scalar_one()
+    assert doc_n == 0  # nothing fabricated, nothing persisted
+
+
+@pytest.mark.asyncio
 async def test_ingest_failure_leaves_zero_documents_and_chunks(
     db_app: FastAPI, db_client: AsyncClient, db_session: AsyncSession
 ) -> None:

@@ -34,16 +34,22 @@ def build_document_parser(settings: Settings) -> DocumentParser:
     text/markdown to the real TextDocumentParser (8f-1) and everything else to
     the `document_parser`-selected fallback.
 
-    The fallback is still the mock (the CI/test default) — PDF/DOCX real parsing
-    lands in a later 8f slice, so DOCUMENT_PARSER=unstructured still fails fast.
+    - "reject" (default): no fallback → unsupported formats are rejected with 415
+      instead of being fabricated by the mock.
+    - "mock": the fabricating fallback, opt-in for tests/CI (conftest pins it),
+      scoped like MockProvider via ai_provider="mock".
+    - "unstructured": real PDF/DOCX, not implemented until a later 8f slice → raises.
     """
     text_parser = TextDocumentParser(max_bytes=settings.document_max_bytes)
-    if settings.document_parser == "mock":
-        fallback: DocumentParser = MockDocumentParser(max_bytes=settings.document_max_bytes)
+    fallback: DocumentParser | None
+    if settings.document_parser == "reject":
+        fallback = None
+    elif settings.document_parser == "mock":
+        fallback = MockDocumentParser(max_bytes=settings.document_max_bytes)
     elif settings.document_parser == "unstructured":
         raise NotImplementedError(
             "DOCUMENT_PARSER=unstructured (real PDF/DOCX) is not implemented until a "
-            "later 8f slice; use 'mock' for now"
+            "later 8f slice; use 'reject' (default) or 'mock' for now"
         )
     else:
         raise RuntimeError(f"Unknown DOCUMENT_PARSER: {settings.document_parser!r}")

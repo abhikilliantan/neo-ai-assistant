@@ -97,7 +97,8 @@ function UploadAndListCard() {
             <FileText className="h-8 w-8 text-muted-foreground" />
             <p className="text-sm font-medium">No documents yet</p>
             <p className="text-sm text-muted-foreground">
-              Upload a PDF, Word, text, or Markdown file to make it searchable by Neo.
+              Upload a text (.txt) or Markdown (.md) file to make it searchable by Neo. PDF and Word
+              support is coming.
             </p>
           </div>
         )}
@@ -272,7 +273,7 @@ function uploadErrorMessage(err: unknown): string {
     const status = err.response?.status;
     if (status === 413) return "This file is too large to upload.";
     if (status === 415)
-      return "That file type isn’t supported. Upload a PDF, Word (.docx), text, or Markdown file.";
+      return "That file type isn’t supported yet. Upload a text (.txt) or Markdown (.md) file — PDF and Word support is coming.";
     if (status === 422)
       return "Neo couldn’t read that file. It may be corrupt, empty, or password-protected.";
     const body = err.response?.data as ApiErrorEnvelope | undefined;

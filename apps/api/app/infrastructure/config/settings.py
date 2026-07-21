@@ -119,9 +119,14 @@ class Settings(BaseSettings):
     n8n_allowed_hosts: str = ""
 
     # --- document intelligence (phase 8a) ---
-    # `mock` is the CI/test default (no file libraries). `unstructured` (real
-    # PDF/DOCX parsing) is NOT implemented until 8f — build raises there.
-    document_parser: Literal["mock", "unstructured"] = "mock"
+    # Fallback parser for formats WITHOUT a real parser (text/markdown always use
+    # the real TextDocumentParser). `reject` (default) rejects such formats at
+    # upload with 415 rather than fabricating content — silent fabrication is
+    # worse than failure. `mock` fabricates and is opt-in for tests/CI ONLY,
+    # scoped exactly like MockProvider (ai_provider="mock"): conftest pins it, so
+    # a dev/prod default of `reject` never invents searchable text. `unstructured`
+    # (real PDF/DOCX) is NOT implemented until a later 8f slice — build raises.
+    document_parser: Literal["reject", "mock", "unstructured"] = "reject"
     # Kill switch mirroring tools_enabled / workflows_enabled. Inert in 8a —
     # nothing consumes it yet; a route-level gate lands in 8c (ingest) / 8d
     # (retrieval).

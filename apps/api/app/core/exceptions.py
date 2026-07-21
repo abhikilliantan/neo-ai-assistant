@@ -172,8 +172,10 @@ async def _document_too_large_handler(_: Request, exc: Exception) -> JSONRespons
 
 
 async def _unsupported_content_type_handler(_: Request, exc: Exception) -> JSONResponse:
+    # Surface the raiser's message (e.g. the dispatcher naming supported types);
+    # messages are developer constants + a normalized content-type, never user data.
     return JSONResponse(
-        _error_body("unsupported_content_type", "unsupported document content type"),
+        _error_body("unsupported_content_type", str(exc) or "unsupported document content type"),
         status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     )
 

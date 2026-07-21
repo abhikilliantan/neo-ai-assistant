@@ -221,12 +221,35 @@ def test_chunker_rejects_bad_config() -> None:
 # --- builders ---------------------------------------------------------------
 
 
-def test_build_document_parser_dispatches_text_vs_mock_fallback() -> None:
-    # 8f-1: the builder now returns a content-type dispatcher whose fallback is
-    # the mock (still the CI/test default for pdf/docx).
+def test_build_document_parser_default_rejects_unsupported_types() -> None:
+    # Default "reject": text/md dispatch to the real parser; pdf/docx have NO
+    # fallback → 415, never mock-fabricated.
     parser = build_document_parser(_base())
     assert isinstance(parser, ContentTypeDocumentParser)
+    assert parser._fallback is None
+
+
+def test_build_document_parser_mock_fallback_is_opt_in() -> None:
+    # "mock" (tests/CI, conftest-pinned) fabricates pdf/docx via the mock.
+    parser = build_document_parser(_base(document_parser="mock"))
+    assert isinstance(parser, ContentTypeDocumentParser)
     assert isinstance(parser._fallback, MockDocumentParser)
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_rejects_unsupported_type_with_415_error() -> None:
+    from app.shared.exceptions.documents import UnsupportedContentTypeError
+
+    parser = build_document_parser(_base())  # default reject
+    with pytest.raises(UnsupportedContentTypeError, match="PDF and Word"):
+        await parser.parse(data=b"%PDF-1.7 ...", content_type="application/pdf")
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_still_parses_text_under_reject_default() -> None:
+    parser = build_document_parser(_base())  # default reject
+    doc = await parser.parse(data=b"hello\n\nworld\n", content_type="text/plain")
+    assert doc.full_text == "hello\n\nworld\n"  # real parser, unaffected by reject
 
 
 def test_build_document_parser_raises_not_implemented_on_real_parser() -> None:
@@ -326,6 +349,6 @@ async def test_lifespan_logs_documents_field(monkeypatch: pytest.MonkeyPatch) ->
     async with main_mod.lifespan(app):
         pass
 
-    assert captured.get("documents") == "mock"
+    assert captured.get("documents") == "reject"  # default parser fallback (8-cleanup)
     # Sanity: existing fields still carried (no regression).
     assert {"tools", "agents", "workflows"} <= set(captured)
