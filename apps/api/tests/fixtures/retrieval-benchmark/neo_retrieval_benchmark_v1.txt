@@ -1,0 +1,155 @@
+Meridian Systems Employee Handbook
+Revision 7 — Internal Distribution Only
+
+ABOUT THIS HANDBOOK
+
+This handbook describes the policies, benefits, and operating procedures that apply to all employees of Meridian Systems Ltd. It supersedes all previous revisions and any conflicting verbal guidance. Where a policy differs by country of employment, the local addendum takes precedence over the text here. Questions about interpretation should be directed to the People Operations team rather than to individual managers, so that answers remain consistent across the organisation.
+
+Nothing in this handbook forms part of an employment contract. Meridian Systems reserves the right to amend any policy described here, with notice provided at least thirty days before a change takes effect, except where a change is required by law or regulation and must take effect sooner.
+
+
+SECTION 1 — COMPANY OVERVIEW
+
+Meridian Systems Ltd is a privately held software company incorporated in 2016. The company designs and operates infrastructure monitoring platforms for mid-market logistics operators, with a particular focus on cold-chain compliance and fleet telemetry. As of the most recent headcount review the company employs 412 people across four offices.
+
+The registered head office is in Bristol, United Kingdom. Engineering is concentrated in Bristol and Kraków, with a commercial team in Chicago and a support operation in Nairobi that provides follow-the-sun coverage outside European working hours. Approximately thirty per cent of staff work on a fully remote basis and are not attached to any office.
+
+The company is organised into five divisions: Engineering, Commercial, Customer Operations, Finance, and People Operations. Each division is led by a director who reports to the Chief Executive. Divisional structure is reviewed annually and may change; the current structure has been stable since the 2023 reorganisation that merged Support and Professional Services into Customer Operations.
+
+Meridian Systems is certified to ISO 27001 and completes an annual SOC 2 Type II examination. Customers in regulated sectors frequently request evidence of these certifications during procurement, and current attestation letters are available from the Finance division on request.
+
+
+SECTION 2 — WORKING HOURS AND ATTENDANCE
+
+Standard working hours are Monday to Friday, 09:00 to 17:30 local time, with a one-hour unpaid break. This amounts to a 37.5-hour working week. Employees in the Nairobi support operation work a shift pattern rather than standard hours, and their arrangements are set out in the Customer Operations shift addendum.
+
+Core hours are 10:00 to 16:00. Employees are expected to be reachable during core hours and may arrange the remainder of their working time flexibly, subject to their manager's agreement and the needs of their team. Flexible arrangements do not require formal approval unless they involve a permanent change to contracted hours.
+
+Remote work is available to all employees whose role does not require physical presence. Employees attached to an office may work remotely up to three days per week by default. Fully remote employees have no office attendance requirement. Requests to work remotely from a country other than the country of employment must be approved in advance by both People Operations and Finance, because of tax and permanent-establishment implications, and are normally limited to thirty consecutive days in any twelve-month period.
+
+Overtime is not routinely expected. Where an employee is required to work beyond contracted hours to resolve a production incident, time in lieu is granted at the manager's discretion and should be taken within the following calendar month.
+
+
+SECTION 3 — LEAVE AND ABSENCE
+
+Annual leave entitlement is 26 days per calendar year, in addition to public holidays observed in the employee's country of employment. Entitlement accrues monthly and is pro-rated for employees joining or leaving part-way through the year. New joiners may take leave before it has fully accrued with their manager's agreement.
+
+Up to five days of unused annual leave may be carried into the following calendar year and must be taken before 31 March. Carry-over beyond five days is not permitted and untaken leave above that threshold is forfeited. Employees are encouraged to plan leave early in the year; the company does not operate a use-it-or-lose-it culture but neither does it pay in lieu of untaken leave except on termination.
+
+Sick leave is paid at full salary for up to 20 days in any rolling twelve-month period. Absences of more than three consecutive working days require a fitness-to-work note from a registered medical practitioner. Absences beyond 20 days move to statutory sick pay arrangements as they apply in the employee's country of employment, and the employee is referred to occupational health.
+
+Parental leave follows statutory entitlement in each country of employment, enhanced by the company as follows: the primary caregiver receives 26 weeks at full pay, and the secondary caregiver receives 8 weeks at full pay. Both entitlements require twelve months of continuous service at the expected date of birth or placement.
+
+Compassionate leave of up to five days at full pay is available following a bereavement. Extensions are granted routinely and sympathetically; managers are instructed not to require documentation.
+
+Unpaid leave of absence may be requested for study, extended travel, or personal circumstances. Requests are considered case by case by the divisional director and are not unreasonably refused, but there is no automatic entitlement and role availability on return cannot always be guaranteed for absences exceeding three months.
+
+
+SECTION 4 — COMPENSATION AND REVIEW
+
+Salaries are reviewed once per year with effect from 1 April. Reviews consider market benchmarking data, internal relativity, and individual performance. The company benchmarks against the upper quartile for engineering roles and the median for commercial roles in each market, reflecting the relative difficulty of hiring in each discipline.
+
+Salary is paid monthly in arrears on the last working day of each month. Where the last working day falls on a public holiday in the employee's country, payment is made on the preceding working day.
+
+There is no company-wide bonus scheme. Commercial roles operate on a commission plan set annually and documented separately in the individual's plan letter. Engineering and operational roles do not receive variable compensation; the company's position is that variable pay in delivery roles creates perverse incentives and salary is set accordingly.
+
+All employees are eligible for the employee share option scheme after six months of continuous service. Options vest over four years with a one-year cliff. The scheme rules are held by Finance and a summary is provided at the point of grant.
+
+Pension contributions are made at 8 per cent of base salary by the company, with a minimum employee contribution of 3 per cent. Employees may increase their own contribution at any time by contacting Finance. The company contribution is not conditional on the employee contributing above the minimum.
+
+
+SECTION 5 — EQUIPMENT AND ASSETS
+
+Every employee is issued a laptop appropriate to their role. Engineering staff receive a MacBook Pro 16-inch with 36 gigabytes of memory. Commercial and operational staff receive a Dell Latitude 7450. Requests for non-standard equipment are considered where there is a demonstrated technical need or an accessibility requirement, and accessibility requests are never refused on cost grounds.
+
+Each employee is also issued an external monitor, a keyboard, and a mouse or trackball of their choosing. Remote employees may claim up to 600 pounds sterling towards a desk and chair, once every four years, against receipt.
+
+All equipment remains the property of Meridian Systems and is recorded in the asset register against the employee's name. Asset identifiers follow the format IT-NNNNN and are printed on a label affixed to the underside of each device. Employees should quote this identifier in any support request.
+
+Equipment is refreshed on a three-year cycle for laptops and a five-year cycle for monitors and peripherals. Replacement outside the refresh cycle is available where a device has failed or where a role change creates a genuine performance need.
+
+On termination of employment, all equipment must be returned within five working days of the final working day. Remote employees are provided with a prepaid shipping label. Unreturned equipment is charged at written-down value against the final salary payment where local law permits.
+
+Personal use of company equipment is permitted within reason. Employees should not store material on company devices that they would not wish a colleague to see, as devices may be accessed during incident investigation or when an employee is unavailable.
+
+
+SECTION 6 — INFORMATION SECURITY
+
+All employees must complete security awareness training within two weeks of joining and annually thereafter. Completion is tracked and non-completion is escalated to the divisional director after two reminders.
+
+Multi-factor authentication is mandatory on all company systems without exception. Hardware security keys are issued to Engineering and Finance staff and to anyone with administrative access to production systems. Other staff may use an authenticator application. SMS-based verification is not permitted on any system.
+
+Passwords must be generated and stored in the company password manager. Employees must not reuse company credentials on external services, must not share credentials with colleagues under any circumstances, and must not store credentials in documents, spreadsheets, code repositories, or chat messages.
+
+Customer data must not be copied to local devices, personal cloud storage, or personal email. Where debugging requires access to customer data, it must be performed within the production access tooling, which records an audit trail. Access to production data requires a documented business justification and is granted for a limited period.
+
+Suspected security incidents must be reported immediately to the security channel, regardless of how minor they appear and regardless of whether the reporting employee believes they may have caused the incident. The company operates a strict no-blame policy on incident reporting. No employee has ever been disciplined for reporting an incident promptly and honestly, and the company regards delayed reporting as the far more serious failure.
+
+Lost or stolen devices must be reported within one hour of discovery so that remote wipe can be initiated.
+
+
+SECTION 7 — TRAVEL AND EXPENSES
+
+Business travel must be booked through the company travel platform wherever possible. Bookings made outside the platform require prior approval and may not be reimbursed if a comparable platform fare was available.
+
+Flights of under six hours are booked in economy class. Flights of six hours or more may be booked in premium economy. Business class is not available except where an accessibility or medical need has been documented with People Operations, in which case it is approved without further discussion.
+
+Accommodation is booked to a standard limit of 180 pounds sterling per night, or local equivalent, rising to 260 pounds in cities designated as high-cost. The current high-cost list comprises London, New York, San Francisco, Zurich, and Singapore, and is reviewed each January.
+
+Meals during business travel are reimbursed against receipt to a limit of 60 pounds sterling per day. Alcohol is not reimbursable except at a client entertainment event that has been approved in advance.
+
+Expense claims must be submitted within 60 days of the expenditure. Claims submitted after 60 days require divisional director approval and are refused where no reasonable explanation is offered. Reimbursement is made with the next monthly payroll run for claims approved before the 20th of the month.
+
+Personal travel may be combined with business travel provided the company bears no additional cost. Where combining travel reduces the total cost — for example, by staying over a weekend to obtain a cheaper fare — the saving may be shared by reimbursing reasonable additional accommodation up to the value of the saving.
+
+
+SECTION 8 — PERFORMANCE AND DEVELOPMENT
+
+Performance is discussed continuously rather than through a formal annual rating. Every employee has a documented one-to-one with their manager at least fortnightly, and the company regards cancelling these repeatedly as a management performance issue.
+
+A written performance summary is produced twice a year, in March and September. The summary records what the employee has delivered, how they have worked with others, and what they will focus on next. It does not assign a numerical rating or a forced distribution. The company has deliberately chosen not to operate stack ranking.
+
+Promotion is decided at a quarterly panel comprising the divisional director, one director from another division, and a People Operations representative. Cases are prepared by the employee's manager in consultation with the employee. An employee may ask for their case to be heard even where their manager does not support it, and this request cannot be refused.
+
+Each employee has an annual learning budget of 1,500 pounds sterling, which may be spent on courses, conferences, books, or certifications without further approval provided the subject is relevant to the employee's current or plausible next role. Unspent budget does not carry over.
+
+Employees who wish to move between divisions are supported to do so. Internal applicants are guaranteed a first-stage interview for any advertised role for which they meet the stated requirements, and managers may not block an internal move; they may only ask for a reasonable handover period, normally not exceeding three months.
+
+
+SECTION 9 — WORKPLACE CONDUCT
+
+Meridian Systems expects all employees to treat colleagues, customers, and suppliers with respect. Harassment, discrimination, and bullying are grounds for dismissal. Reports may be made to any manager, to People Operations, or through the anonymous reporting line operated by an external provider.
+
+Conflicts of interest must be declared. This includes outside employment, directorships, significant shareholdings in competitors or suppliers, and close personal relationships with colleagues where one party has influence over the other's pay, promotion, or work allocation. Declaration does not imply wrongdoing and is not itself a disciplinary matter; failure to declare is.
+
+Employees may speak publicly about their work, including at conferences and on social media, provided they do not disclose customer identities, unreleased product plans, security details, or financial information. Employees are not required to seek approval for routine professional commentary, and the company does not review personal social media accounts.
+
+Alcohol at company events is available but never compulsory, and every company event must offer a meaningful alternative to alcohol-centred socialising. Managers should be aware that pressure to drink, however lightly meant, is a form of exclusion.
+
+
+SECTION 10 — HEALTH, SAFETY, AND EMERGENCY CONTACTS
+
+Every employee must maintain a current emergency contact record in the people system. The record should include the contact's name, relationship to the employee, and a telephone number reachable outside working hours. Employees are prompted to confirm their emergency contact details every six months, and records not confirmed within twelve months are flagged to People Operations.
+
+Emergency contact details are accessible only to People Operations and to the employee themselves. They are not visible to managers or colleagues, and are used solely in the event of a medical emergency or serious incident.
+
+Offices have designated first aiders whose names are displayed at each entrance and beside each kitchen area. Fire evacuation procedures are posted on every floor, and evacuation drills are held twice a year.
+
+Remote employees are responsible for ensuring their working environment is safe. The company provides a home workstation assessment on request and will fund reasonable adjustments identified by that assessment.
+
+The employee assistance programme provides confidential counselling and practical support to all employees and their immediate household, available 24 hours a day at no cost. Use of the programme is not reported to the company in any identifiable form, and managers are not informed.
+
+
+SECTION 11 — LEAVING THE COMPANY
+
+Notice periods are three months for directors, two months for senior staff, and one month for all other employees, in each case from either side. Notice may be waived or shortened by mutual agreement.
+
+The company conducts an exit conversation with every leaver, held by a People Operations representative rather than the employee's manager. Notes are anonymised and themes are reported to the executive team quarterly.
+
+Departing employees retain vested share options in accordance with the scheme rules, which allow a twelve-month exercise window following the termination date. Unvested options lapse.
+
+References are provided for all former employees and confirm job title, dates of employment, and, where the employee consents, a substantive assessment of their work. The company does not provide negative references; where it is unwilling to provide a substantive reference it provides the factual version only and tells the employee so.
+
+
+END OF HANDBOOK
+This document contains entirely synthetic data created for testing document upload, parsing, chunking, embedding, retrieval, and citation accuracy. It describes no real company, person, or policy.
