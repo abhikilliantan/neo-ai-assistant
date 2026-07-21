@@ -1,6 +1,6 @@
 # 0001. BlockAwareChunker
 
-Status: Accepted
+Status: Accepted (amended 2026-07-21 — see Amendment 1: flip gate changed)
 Date: 2026-07-21
 Deciders: retrieval/ingest owners
 Supersedes: none
@@ -622,3 +622,93 @@ finding). Introducing it behind a `document_chunker` flag, adding the per-row
 `chunker` provenance column, and gating the default flip on an unchanged
 benchmark re-run (Q6 = 0 as a hard invariant) captures the upside while keeping
 rollback trivial and the measurement honest.
+
+---
+
+## Amendment 1 — 2026-07-21: score-margin flip-gate falsified, replaced with citation-quality metrics
+
+This amendment does NOT reverse the ADR. The core decisions stand: BlockAwareChunker
+exists behind the `document_chunker` config flag (Decision 7), with per-row `chunker`
+provenance (Decision 8). What changes is the acceptance gate for flipping the DEFAULT
+to `block_aware` — the Open Question 2 resolution. Per the ADR README convention the
+original gate is left intact above; this block records that it was mis-specified and
+what replaced it.
+
+### What happened
+
+The V2 benchmark (block_aware, all else identical: floor 0.50, chunk_size 1000,
+overlap 200, voyage-3.5) was run and accepted as honest. Against the original OQ2 gate:
+
+- (a) Q1 top chunk begins with LEAVE content, not remote-work — PASS (repeatable).
+- (b) min margin above floor across Q1–Q5 >= 0.03 — did not hold (v2 0.006 vs v1 0.009).
+- (c) spread (highest Q1–Q5 − Q6 best-rejected) increases — did not hold
+  (v2 0.1983 vs v1 0.2041).
+- (d) Q6 returns zero results — PASS.
+
+### Decider's reasoning (verbatim)
+
+> "My criteria (b) and (c) were miscalibrated — I asked a chunking change to improve a
+> scoring metric it does not target, and the observed differences (0.003 margin, 0.006
+> spread) are smaller than this benchmark can resolve with one document and six queries.
+> Treat them as inconclusive, not failed. Criterion (a) passed structurally and
+> repeatably. So the decision now rests on a metric I should have specified originally."
+
+Accordingly: criteria (b) and (c) are RECLASSIFIED from FAIL to INCONCLUSIVE (the
+V1→V2 deltas — 0.003 in min margin, 0.006 in spread — are below this benchmark's
+resolving power with one document and six queries, and score margin is a property of
+the embedding model + floor, not the chunker). The score-margin hypothesis behind
+(b)/(c) is treated as FALSIFIED as a chunker-acceptance test.
+
+### Replacement gate — citation-quality metrics
+
+The flip decision is re-based on what a chunker actually controls: WHERE the citation
+falls. Measured DETERMINISTICALLY from the already-recorded V1/V2 char ranges and the
+corpus on disk — no embeddings, no API calls, no re-run:
+
+1. Citation tightness = cited chunk length ÷ minimal answering-span length (lower = tighter).
+2. Answer position = where the answering sentence begins in the cited chunk
+   (first sentence / first 20% / later).
+
+Minimal answering spans (chosen and stated for review):
+
+    Q1  "Annual leave entitlement is 26 days per calendar year"                        chars 3761-3814 (53)
+    Q2  "Engineering staff receive a MacBook Pro 16-inch ... Dell Latitude 7450."      chars 7315-7454 (139)
+    Q3  "Compassionate leave of up to five days at full pay ... following a bereavement." chars 5213-5301 (88)
+    Q4  "Requests to work remotely from a country ... both People Operations and
+         Finance ... thirty consecutive days ..."                                     chars 3204-3485 (281)
+    Q5  "Every employee must maintain a current emergency contact record in the people system." chars 15366-15451 (85)
+
+Results (V1 fixed -> V2 block_aware):
+
+    Q   tightness V1 -> V2     answer position V1 -> V2
+    Q1  18.9x -> 14.5x         56.1% (later)     -> 4.0%  (first sentence)
+    Q2   7.2x ->  6.8x         11.5% (first 20%) -> 10.0% (first 20%)
+    Q3  11.4x -> 12.6x         41.3% (later)     -> 0.0%  (first sentence)
+    Q4   3.6x ->  2.8x          0.4% (first 20%) -> 30.0% (later)
+    Q5  11.8x -> 10.3x         16.6% (first 20%) -> 6.1%  (first sentence)
+    avg 10.6x ->  9.4x         first-sentence count 0 -> 3 ; "later" count 2 -> 1
+
+Reading:
+
+- Tightness improved on 4 of 5 (avg 10.6x -> 9.4x). The one looser case (Q3) is an
+  overlap-carry artefact (1110-char chunk) but its answer moved 41% -> 0%, so the
+  citation is far more useful despite marginal extra length.
+- Position improved decisively: block_aware puts the answer in the FIRST SENTENCE for
+  Q1/Q3/Q5 (fixed: none) and eliminates BOTH of fixed's buried citations (Q1 56%,
+  Q3 41%). The lone regression, Q4 (0.4% -> 30%), is smaller than the two fixes and
+  is a case where fixed's early position was itself a mid-word-cut artefact (its chunk
+  opened "nt. Requests to work remotely..."), whereas block_aware opens at a clean
+  paragraph boundary.
+
+### Amended decision
+
+FLIP the default to `document_chunker="block_aware"` on citation grounds. Decision 7's
+"default stays fixed until block_aware passes the benchmark" is satisfied under the
+replacement gate. Criterion (a) and (d) still hold; (b)/(c) are inconclusive, not
+disqualifying.
+
+Follow-up implementation (separate, gated on approval; not done in this amendment):
+change the Settings default `fixed -> block_aware`, update the chunker-selection tests
+and conftest ingest expectations, run the full suite green, and record a block_aware
+"benchmark of record" (this is a config change, NOT a corpus/query change — it appends
+a run block to the v1 spec; the spec version does not increment, per Open Question 2).

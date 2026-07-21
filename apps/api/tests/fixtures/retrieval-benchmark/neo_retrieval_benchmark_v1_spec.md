@@ -119,3 +119,67 @@ Notes:
   server-default top_k (no limit param). Real Voyage calls confirmed (200 OK to
   api.voyageai.com/v1/embeddings). No application code, settings, or .env were modified.
 ```
+
+
+<!-- Appended by ADR 0001 block_aware run — do not edit; append new runs below. -->
+```
+Run:        v2 (ADR 0001 block_aware) — same corpus + queries as v1 baseline
+Date:       2026-07-21
+Commit:     working tree on 5617c07 + ADR 0001 impl (uncommitted); migration b7e3d9a1f2c4
+Config:     chunk_size=1000 chars, overlap=200, floor=0.50, top_k=5, voyage-3.5 (1024d)
+            document_chunker=block_aware (dev-only .env; default remains "fixed")
+Chunks:     21   (v1: 23)
+
+                                score   char range     runner-up   pass/partial/fail
+Q1 annual leave                 65.6%   3730-4498      56.4%       pass
+Q2 what computer                53.0%   7220-8172      <floor      pass
+Q3 bereavement                  50.6%   5213-6323      <floor      partial
+Q4 work from abroad             53.2%   2965-3761      <floor      pass
+Q5 emergency                    54.4%   15313-16185    <floor      pass
+Q6 dental (expect ZERO)         0 results  (best rejected 45.7%)   pass
+
+Passage heads (first ~100 chars of the top result):
+Q1: "SECTION 3 - LEAVE AND ABSENCE\n\nAnnual leave entitlement is 26 days per calendar year, in addition to"
+Q2: "SECTION 5 - EQUIPMENT AND ASSETS\n\nEvery employee is issued a laptop appropriate to their role. Engin"
+Q3: "Compassionate leave of up to five days at full pay is available following a bereavement. Extensions ar"
+Q4: "Remote work is available to all employees whose role does not require physical presence. Employees att"
+Q5: "SECTION 10 - HEALTH, SAFETY, AND EMERGENCY CONTACTS\n\nEvery employee must maintain a current emergency"
+Q6: (no results; best below-floor candidate 45.7%)
+
+ADR 0001 Open Question 2 acceptance gate (flip default only if ALL four hold):
+  (a) Q1 top chunk begins with LEAVE content, not remote-work ......... PASS
+      (v1 opened in Section 2 remote-work at char 3200; v2 opens in Section 3
+       "Annual leave entitlement is 26 days..." at char 3730)
+  (b) min margin above floor across Q1-Q5 >= 0.03 .................... FAIL
+      v2 min = 0.006 (Q3, 0.5060-0.50); v1 min was 0.009 (Q4). WORSE, not better.
+      (Q2 margin 0.0295 is also < 0.03.)
+  (c) spread (highest Q1-Q5 - Q6 best-rejected) increases vs v1 ...... FAIL
+      v1 = 0.6663 - 0.4622 = 0.2041 ; v2 = 0.6557 - 0.4574 = 0.1983. DECREASED.
+  (d) Q6 still returns zero results .................................. PASS
+
+RESULT: 2 of 4 criteria FAIL -> block_aware NOT accepted as default. Keep "fixed".
+
+Notes:
+- Citation QUALITY improved decisively (the ADR's stated target): chunk boundaries
+  now land on paragraph/section edges. Q1 no longer opens mid-sentence in Section 2;
+  Q1 (3730-4498) and Q4 (2965-3761) are now SEPARATE chunks (v1 shared 3200-4200).
+  Q3/Q4/Q5 top chunks begin with the relevant section/answer.
+- But retrieval DISCRIMINATION did not improve and slightly regressed on the gate
+  metrics. Q3 dropped 0.5118 -> 0.5060: the block_aware bereavement chunk packs the
+  compassionate + unpaid-leave paragraphs to ~1110 chars, so the averaged embedding
+  is marginally less peaked on "bereavement" than v1's window. The compressed-score /
+  thin-margin problem is a property of the embedding model + floor, NOT the chunker;
+  block_aware does not move it.
+- chunker provenance verified per-row: v2 rows carry chunker="block-aware-1",
+  v1 rows "fixed-1" (backfilled). Recorded only; retrieval does not filter by it.
+- Rate limiting: Voyage 429 during Q3 and Q6 (3 retries each, 25s waits). Scores/
+  ranges unaffected (deterministic embeddings); wall-clock only.
+- Method identical to v1: HTTP API, fresh org, clean corpus, six queries verbatim,
+  no limit param (server-default top_k=5). "runner-up = <floor" means only one
+  result cleared the 0.50 floor; the next candidate was below it (not returned).
+- Recommendation: REVERT dev .env to document_chunker=fixed (done). Keep BlockAwareChunker
+  in the tree behind config for the citation-quality win, but do not make it default:
+  the OQ2 gate is not met. If the goal is citation precision rather than score margin,
+  the gate itself may warrant revisiting — but per the accepted decision, this is a
+  reject, and nothing was tuned to force a pass.
+```

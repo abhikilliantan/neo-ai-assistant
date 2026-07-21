@@ -13,6 +13,7 @@ from itertools import pairwise
 import pytest
 
 from app.ai.documents import (
+    BlockAwareChunker,
     ContentTypeDocumentParser,
     FixedSizeChunker,
     MockDocumentParser,
@@ -234,7 +235,9 @@ def test_build_document_parser_raises_not_implemented_on_real_parser() -> None:
 
 
 def test_build_chunker_returns_configured_fixed_chunker() -> None:
-    chunker = build_chunker(_base(document_chunk_size=100, document_chunk_overlap=25))
+    chunker = build_chunker(
+        _base(document_chunker="fixed", document_chunk_size=100, document_chunk_overlap=25)
+    )
     assert isinstance(chunker, FixedSizeChunker)
     doc = _doc(ParsedBlock(text="w" * 130))
     chunks = chunker.chunk(document_id="d", document=doc)
@@ -242,12 +245,11 @@ def test_build_chunker_returns_configured_fixed_chunker() -> None:
     assert [(c.position.char_start, c.position.char_end) for c in chunks] == [(0, 100), (75, 130)]
 
 
-def test_build_chunker_selects_block_aware() -> None:
-    # ADR 0001 Decision 7: default stays fixed; block_aware selectable by config.
-    from app.ai.documents import BlockAwareChunker
+def test_build_chunker_default_is_block_aware() -> None:
+    # ADR 0001 Amendment 1: block_aware is now the default; fixed still selectable.
 
-    assert isinstance(build_chunker(_base()), FixedSizeChunker)  # default unchanged
-    assert isinstance(build_chunker(_base(document_chunker="block_aware")), BlockAwareChunker)
+    assert isinstance(build_chunker(_base()), BlockAwareChunker)  # default flipped
+    assert isinstance(build_chunker(_base(document_chunker="fixed")), FixedSizeChunker)
 
 
 # --- kill switch: inert this slice ------------------------------------------
@@ -266,7 +268,8 @@ def test_documents_enabled_false_is_inert_this_slice() -> None:
     settings = _base(documents_enabled=False)
     assert settings.documents_enabled is False
     assert isinstance(build_document_parser(settings), ContentTypeDocumentParser)
-    assert isinstance(build_chunker(settings), FixedSizeChunker)
+    # ADR 0001 Amendment 1: default chunker is now block_aware.
+    assert isinstance(build_chunker(settings), BlockAwareChunker)
 
 
 # --- lifespan wiring + startup log ------------------------------------------
@@ -274,10 +277,12 @@ def test_documents_enabled_false_is_inert_this_slice() -> None:
 
 def test_db_app_pins_parser_and_chunker_on_state(db_app) -> None:  # type: ignore[no-untyped-def]
     # 8f-1: the pinned parser is the content-type dispatcher; its non-text
-    # fallback is still the mock (the CI/test default).
+    # fallback is still the mock (the CI/test default). ADR 0001 Amendment 1:
+    # the pinned chunker is now block_aware (the new default).
+
     assert isinstance(db_app.state.document_parser, ContentTypeDocumentParser)
     assert isinstance(db_app.state.document_parser._fallback, MockDocumentParser)
-    assert isinstance(db_app.state.chunker, FixedSizeChunker)
+    assert isinstance(db_app.state.chunker, BlockAwareChunker)
 
 
 def test_create_app_leaves_document_state_uninitialized_until_lifespan() -> None:
