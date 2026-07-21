@@ -16,8 +16,13 @@ Nothing consumes either yet — 8a is the contracts/mock slice; 8c wires ingest.
 from __future__ import annotations
 
 from app.ai.documents.chunker import FixedSizeChunker
+from app.ai.documents.ingest import (
+    DocumentIngestService,
+    validate_chunk_size_within_token_cap,
+)
 from app.ai.documents.mock import MockDocumentParser
 from app.application.ports.documents import Chunker, DocumentParser
+from app.application.ports.embeddings import EmbeddingProvider
 from app.infrastructure.config import Settings
 
 
@@ -44,9 +49,31 @@ def build_chunker(settings: Settings) -> Chunker:
     )
 
 
+def build_document_ingest_service(
+    settings: Settings,
+    *,
+    parser: DocumentParser,
+    chunker: Chunker,
+    embedding_provider: EmbeddingProvider,
+) -> DocumentIngestService:
+    """Wire the ingest service. The constructor runs the token-cap guard, so a
+    chunk_size that could be silently truncated at embed fails fast at startup.
+    """
+    return DocumentIngestService(
+        parser=parser,
+        chunker=chunker,
+        embedding_provider=embedding_provider,
+        chunk_size=settings.document_chunk_size,
+        embedding_model=settings.embedding_model,
+    )
+
+
 __all__ = [
+    "DocumentIngestService",
     "FixedSizeChunker",
     "MockDocumentParser",
     "build_chunker",
+    "build_document_ingest_service",
     "build_document_parser",
+    "validate_chunk_size_within_token_cap",
 ]

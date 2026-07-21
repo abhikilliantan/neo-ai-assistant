@@ -11,7 +11,11 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.ai.agents import build_agent_registry
-from app.ai.documents import build_chunker, build_document_parser
+from app.ai.documents import (
+    build_chunker,
+    build_document_ingest_service,
+    build_document_parser,
+)
 from app.ai.extractors import build_memory_extractor
 from app.ai.providers import build_chat_provider
 from app.ai.providers.embeddings import build_embedding_provider
@@ -55,6 +59,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 8a: document parser + chunker (mock default). Fail-fast if misconfigured.
     document_parser = build_document_parser(settings)
     chunker = build_chunker(settings)
+    # 8b: ingest service. Its constructor runs the token-cap guard, so a
+    # chunk_size that could be silently truncated at embed fails HERE, at startup.
+    document_ingest = build_document_ingest_service(
+        settings,
+        parser=document_parser,
+        chunker=chunker,
+        embedding_provider=embedding_provider,
+    )
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
@@ -75,6 +87,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.workflow_url_resolver = system_resolver
     app.state.document_parser = document_parser
     app.state.chunker = chunker
+    app.state.document_ingest = document_ingest
     app.state.health_checks = checks
     log.info(
         "startup",

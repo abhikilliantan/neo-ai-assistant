@@ -23,3 +23,14 @@ class DocumentTooLargeError(DocumentParseError):
 
 class UnsupportedContentTypeError(DocumentParseError):
     """The parser does not handle this content type."""
+
+
+class DocumentConfigError(Exception):
+    """Misconfiguration that would corrupt ingest — raised at BUILD time, loudly.
+
+    The token-cap guard raises this when the configured `chunk_size` (characters)
+    could produce a chunk exceeding the embedding model's max input tokens. The
+    embedding provider would silently truncate such a chunk at embed time,
+    corrupting retrieval invisibly — the worst failure mode here — so we refuse
+    to start instead.
+    """

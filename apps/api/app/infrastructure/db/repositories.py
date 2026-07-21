@@ -21,8 +21,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports.documents import DocumentChunk as DocumentChunkVO
 from app.infrastructure.db.models import (
     Conversation,
+    Document,
+    DocumentChunk,
     Membership,
     Memory,
     Message,
@@ -314,6 +317,124 @@ class MemoryRepository:
         if m is None or m.deleted_at is not None:
             return
         m.deleted_at = datetime.now(UTC)
+        await self.session.flush()
+
+
+class DocumentRepository:
+    """Tenant-scoped. RLS filters organization_id at the DB layer; every method
+    takes it explicitly so the app-layer intent is audit-visible. Mirrors
+    MemoryRepository, including the embedding_model guard on chunk search.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        *,
+        organization_id: UUID,
+        uploaded_by_user_id: UUID,
+        filename: str,
+        content_type: str,
+        byte_size: int,
+        full_text: str,
+        status: str = "ready",
+    ) -> Document:
+        doc = Document(
+            organization_id=organization_id,
+            uploaded_by_user_id=uploaded_by_user_id,
+            filename=filename,
+            content_type=content_type,
+            byte_size=byte_size,
+            full_text=full_text,
+            status=status,
+        )
+        self.session.add(doc)
+        await self.session.flush()  # populate doc.id for chunk FKs
+        return doc
+
+    async def add_chunks(
+        self,
+        *,
+        document_id: UUID,
+        organization_id: UUID,
+        chunks: list[DocumentChunkVO],
+        vectors: list[list[float]],
+        embedding_model: str,
+    ) -> list[DocumentChunk]:
+        """Insert all chunk rows in one unit of work. `strict=True` refuses a
+        chunk/vector count mismatch loudly rather than persisting a skewed set.
+        """
+        rows: list[DocumentChunk] = []
+        for chunk, vector in zip(chunks, vectors, strict=True):
+            row = DocumentChunk(
+                document_id=document_id,
+                organization_id=organization_id,
+                ordinal=chunk.ordinal,
+                text=chunk.text,
+                embedding=vector,
+                embedding_model=embedding_model,
+                char_start=chunk.position.char_start,
+                char_end=chunk.position.char_end,
+                page_start=chunk.position.page_start,
+                page_end=chunk.position.page_end,
+                section=chunk.position.section,
+            )
+            self.session.add(row)
+            rows.append(row)
+        await self.session.flush()
+        return rows
+
+    async def search_chunks(
+        self,
+        *,
+        organization_id: UUID,
+        query_embedding: list[float],
+        limit: int = 5,
+        embedding_model: str | None = None,
+    ) -> list[tuple[DocumentChunk, float]]:
+        """Cosine-similarity ANN search over chunks, tenant-scoped, soft-delete
+        aware at BOTH the chunk and its parent document.
+
+        Joins `documents` and filters `Document.deleted_at IS NULL`, so
+        soft-deleting a single document row excludes all its chunks from search.
+
+        `embedding_model` (5d guard) filters to one vector space: cosine distance
+        across rows from different models is numerically meaningless. When set,
+        only rows tagged with this exact model are considered — a model swap
+        can't poison results with foreign-vector-space rows.
+        """
+        distance = DocumentChunk.embedding.cosine_distance(query_embedding).label("distance")
+        stmt = (
+            select(DocumentChunk, distance)
+            .join(Document, DocumentChunk.document_id == Document.id)
+            .where(DocumentChunk.organization_id == organization_id)
+            .where(DocumentChunk.deleted_at.is_(None))
+            .where(Document.deleted_at.is_(None))
+        )
+        if embedding_model is not None:
+            stmt = stmt.where(DocumentChunk.embedding_model == embedding_model)
+        stmt = stmt.order_by(distance.asc()).limit(limit)
+        rows = (await self.session.execute(stmt)).all()
+        return [(chunk, 1.0 - float(dist)) for chunk, dist in rows]
+
+    async def get_document(self, document_id: UUID) -> Document | None:
+        return await self.session.get(Document, document_id)
+
+    async def list_chunks(
+        self, document_id: UUID, *, active_only: bool = True
+    ) -> list[DocumentChunk]:
+        stmt = select(DocumentChunk).where(DocumentChunk.document_id == document_id)
+        if active_only:
+            stmt = stmt.where(DocumentChunk.deleted_at.is_(None))
+        stmt = stmt.order_by(DocumentChunk.ordinal.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def soft_delete(self, document_id: UUID) -> None:
+        doc = await self.session.get(Document, document_id)
+        if doc is None or doc.deleted_at is not None:
+            return
+        doc.deleted_at = datetime.now(UTC)
         await self.session.flush()
 
 

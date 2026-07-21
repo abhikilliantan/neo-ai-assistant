@@ -235,7 +235,11 @@ async def db_app(
     app_engine: AsyncEngine,
 ) -> AsyncIterator[FastAPI]:
     from app.ai.agents import build_agent_registry
-    from app.ai.documents import build_chunker, build_document_parser
+    from app.ai.documents import (
+        build_chunker,
+        build_document_ingest_service,
+        build_document_parser,
+    )
     from app.ai.extractors.mock import MockMemoryExtractor
     from app.ai.providers.embeddings.mock import MockEmbeddingProvider
     from app.ai.providers.mock import MockProvider
@@ -284,6 +288,13 @@ async def db_app(
     # 8a: pin the mock document parser + chunker — CI/test default.
     app.state.document_parser = build_document_parser(settings)
     app.state.chunker = build_chunker(settings)
+    # 8b: ingest service over the mock parser/chunker + mock embedding provider.
+    app.state.document_ingest = build_document_ingest_service(
+        settings,
+        parser=app.state.document_parser,
+        chunker=app.state.chunker,
+        embedding_provider=app.state.embedding_provider,
+    )
     yield app
 
 
