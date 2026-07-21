@@ -251,7 +251,9 @@ function SearchCard() {
 function ResultRow({ result }: { result: DocumentSearchResult }) {
   return (
     <li className="space-y-1 rounded-md border px-3 py-2">
-      <p className="break-words text-sm">{result.text}</p>
+      {/* whitespace-pre-wrap: the parser preserves newlines in full_text; render
+          them so structured passages don't collapse into one run-on paragraph. */}
+      <p className="whitespace-pre-wrap break-words text-sm">{result.text}</p>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">{result.filename}</span>
         <span>·</span>
