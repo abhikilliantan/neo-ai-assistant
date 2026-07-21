@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.ai.agents import build_agent_registry
+from app.ai.documents import build_chunker, build_document_parser
 from app.ai.extractors import build_memory_extractor
 from app.ai.providers import build_chat_provider
 from app.ai.providers.embeddings import build_embedding_provider
@@ -51,6 +52,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     workflow_registry = build_workflow_registry(settings)
     # 7d: the "operator" agent's permissions derive from the live workflow set.
     agent_registry = build_agent_registry(settings, workflow_names=workflow_registry.list_names())
+    # 8a: document parser + chunker (mock default). Fail-fast if misconfigured.
+    document_parser = build_document_parser(settings)
+    chunker = build_chunker(settings)
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
@@ -69,6 +73,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 7f-2: resolver for validating tenant workflow URLs at read time. Real
     # getaddrinfo in prod; conftest pins an offline one so tests never hit DNS.
     app.state.workflow_url_resolver = system_resolver
+    app.state.document_parser = document_parser
+    app.state.chunker = chunker
     app.state.health_checks = checks
     log.info(
         "startup",
@@ -80,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         tools=",".join(t["name"] for t in tool_registry.specs()),
         agents=",".join(agent_registry.list_names()),
         workflows=",".join(workflow_registry.list_names()),
+        documents=settings.document_parser,
     )
 
     try:

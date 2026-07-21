@@ -235,6 +235,7 @@ async def db_app(
     app_engine: AsyncEngine,
 ) -> AsyncIterator[FastAPI]:
     from app.ai.agents import build_agent_registry
+    from app.ai.documents import build_chunker, build_document_parser
     from app.ai.extractors.mock import MockMemoryExtractor
     from app.ai.providers.embeddings.mock import MockEmbeddingProvider
     from app.ai.providers.mock import MockProvider
@@ -280,6 +281,9 @@ async def db_app(
     # Defaults every host to a PUBLIC IP; SSRF tests override app.state to map
     # a host to a private/blocked address.
     app.state.workflow_url_resolver = lambda _host: ["93.184.216.34"]
+    # 8a: pin the mock document parser + chunker — CI/test default.
+    app.state.document_parser = build_document_parser(settings)
+    app.state.chunker = build_chunker(settings)
     yield app
 
 

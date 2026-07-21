@@ -118,6 +118,25 @@ class Settings(BaseSettings):
     # wildcards. A security-conscious deployment turns this on.
     n8n_allowed_hosts: str = ""
 
+    # --- document intelligence (phase 8a) ---
+    # `mock` is the CI/test default (no file libraries). `unstructured` (real
+    # PDF/DOCX parsing) is NOT implemented until 8f — build raises there.
+    document_parser: Literal["mock", "unstructured"] = "mock"
+    # Kill switch mirroring tools_enabled / workflows_enabled. Inert in 8a —
+    # nothing consumes it yet; a route-level gate lands in 8c (ingest) / 8d
+    # (retrieval).
+    documents_enabled: bool = True
+    # Chunking, in CHARACTERS. The real limit is the embedding model's max
+    # TOKENS (≈ 4 chars/token) — keep chunk_size well under the model cap.
+    document_chunk_size: int = 1000
+    document_chunk_overlap: int = 200
+    # Resource limits on UNTRUSTED uploads (8c enforces at the route; the parser
+    # enforces max_bytes now). Timeout is enforced by the CALLER via
+    # asyncio.wait_for — a parser can't reliably self-timeout mid-CPU-work.
+    document_max_bytes: int = 10_000_000  # 10 MB
+    document_max_pages: int = 500
+    document_parse_timeout_seconds: float = 30.0
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]

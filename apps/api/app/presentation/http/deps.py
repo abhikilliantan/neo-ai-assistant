@@ -24,6 +24,7 @@ from app.ai.agents import AgentRegistry
 from app.ai.tools import ToolRegistry
 from app.ai.workflows import WorkflowRegistry
 from app.ai.workflows.urlguard import Resolver, system_resolver
+from app.application.ports.documents import Chunker, DocumentParser
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
 from app.application.ports.memory_extraction import MemoryExtractor
@@ -114,6 +115,19 @@ def get_workflow_url_resolver(request: Request) -> Resolver:
     return resolver
 
 
+def get_document_parser(request: Request) -> DocumentParser:
+    """Built once in the lifespan. NO route consumes this yet — 8a is the
+    contracts/mock slice; 8c wires document ingest. Present here so 8c is a
+    pure route-level change (same shape as get_workflow_client).
+    """
+    return request.app.state.document_parser  # type: ignore[no-any-return]
+
+
+def get_chunker(request: Request) -> Chunker:
+    """Built once in the lifespan. NO route consumes this yet — 8c wires it."""
+    return request.app.state.chunker  # type: ignore[no-any-return]
+
+
 def get_app_settings(request: Request) -> Settings:
     """Read the Settings instance built in create_app / lifespan.
 
@@ -157,6 +171,8 @@ AgentRegistryDep = Annotated[AgentRegistry, Depends(get_agent_registry)]
 WorkflowClientDep = Annotated[WorkflowClient, Depends(get_workflow_client)]
 WorkflowRegistryDep = Annotated[WorkflowRegistry, Depends(get_workflow_registry)]
 WorkflowUrlResolverDep = Annotated[Resolver, Depends(get_workflow_url_resolver)]
+DocumentParserDep = Annotated[DocumentParser, Depends(get_document_parser)]
+ChunkerDep = Annotated[Chunker, Depends(get_chunker)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 
