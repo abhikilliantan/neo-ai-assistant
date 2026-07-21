@@ -166,3 +166,33 @@ export type Document = {
   chunk_count: number;
   created_at: string;
 };
+
+// --- document search (mirrors backend POST /api/v1/documents/search) ---
+// 8e-1 builds this transport; 8e-2 builds the UI that renders it.
+export type DocumentSearchRequest = {
+  query: string;
+  limit?: number;
+};
+
+// Structured provenance for linking/highlighting ONLY. The UI must never
+// re-derive the human citation from these — render `citation` instead, so the
+// server's DocumentPosition.render() stays the single source of truth.
+export type DocumentPosition = {
+  char_start: number;
+  char_end: number;
+  page_start: number | null;
+  page_end: number | null;
+  section: string | null;
+};
+
+// One chunk hit. Whitelist: chunk `text` only — the document's full_text and
+// the embedding vector never cross the boundary. Below-floor hits are absent,
+// so every result shown is one the server asserts is relevant.
+export type DocumentSearchResult = {
+  document_id: string;
+  filename: string;
+  text: string;
+  similarity: number;
+  position: DocumentPosition;
+  citation: string;
+};

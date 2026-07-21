@@ -20,17 +20,24 @@ from uuid import UUID
 from fastapi import APIRouter, Request, status
 from fastapi.responses import Response
 
-from app.infrastructure.db.models import Document
+from app.application.ports.documents import DocumentPosition
+from app.infrastructure.db.models import Document, DocumentChunk
 from app.infrastructure.db.repositories import DocumentRepository
 from app.presentation.http.deps import (
     CurrentTenantDep,
     CurrentUserDep,
     DocumentIngestDep,
+    EmbeddingProviderDep,
     SettingsDep,
     TenantSessionDep,
 )
 from app.presentation.http.multipart import read_upload
-from app.presentation.http.schemas.documents import DocumentOut
+from app.presentation.http.schemas.documents import (
+    DocumentOut,
+    DocumentPositionOut,
+    DocumentSearchRequest,
+    DocumentSearchResult,
+)
 from app.shared.exceptions.auth import AuthenticationError
 from app.shared.exceptions.common import NotFoundError
 from app.shared.exceptions.documents import DocumentParseError, UnsupportedContentTypeError
@@ -103,6 +110,46 @@ async def list_documents(
     return [_to_out(doc, n) for doc, n in rows]
 
 
+_MIN_LIMIT = 1
+_MAX_LIMIT = 10
+
+
+@router.post("/documents/search", response_model=list[DocumentSearchResult])
+async def search_documents(
+    body: DocumentSearchRequest,
+    tenant_id: CurrentTenantDep,
+    session: TenantSessionDep,
+    settings: SettingsDep,
+    embedding_provider: EmbeddingProviderDep,
+) -> list[DocumentSearchResult]:
+    """Tenant-scoped semantic search over the org's document chunks — the JSON
+    surface behind 8d's model-facing tool. Reuses DocumentRepository.search_chunks
+    (the ONE retrieval path); the only thing this adds over the tool is the UI
+    citation floor (see settings.document_search_min_similarity).
+    """
+    if not settings.documents_enabled:
+        # Kill switch: the feature is off → the endpoint is absent (no oracle).
+        raise NotFoundError("document search is disabled")
+    if tenant_id is None:
+        raise AuthenticationError("user has no active tenant")
+
+    limit = max(_MIN_LIMIT, min(_MAX_LIMIT, body.limit))
+    # Embed as a QUERY and pass the provider's REPORTED model into the search
+    # (5d guard): only chunks embedded by the same model are scored.
+    embedded = await embedding_provider.embed(texts=[body.query], input_type="query")
+    hits = await DocumentRepository(session).search_chunks(
+        organization_id=tenant_id,
+        query_embedding=embedded.vectors[0],
+        limit=limit,
+        embedding_model=embedded.model,
+    )
+    # ⚠️ FLOOR: omit below-floor hits ENTIRELY. A citation shown at all is an
+    # assertion of relevance — a weak match is not returned flagged, it is not
+    # returned. Empty result → a valid empty list, never an error.
+    floor = settings.document_search_min_similarity
+    return [_to_result(chunk, sim) for chunk, sim in hits if sim >= floor]
+
+
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: UUID,
@@ -120,6 +167,28 @@ async def delete_document(
         raise NotFoundError("document not found")
     await repo.soft_delete(document_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _to_result(chunk: DocumentChunk, similarity: float) -> DocumentSearchResult:
+    # Rebuild the position from the STORED provenance columns and render it with
+    # the canonical 8a renderer — the UI shows `citation` and never re-derives
+    # page/section logic, so the two renderers can't drift. `chunk.document` is
+    # eager-loaded by search_chunks, so .filename is safe post-session.
+    position = DocumentPosition(
+        char_start=chunk.char_start,
+        char_end=chunk.char_end,
+        page_start=chunk.page_start,
+        page_end=chunk.page_end,
+        section=chunk.section,
+    )
+    return DocumentSearchResult(
+        document_id=chunk.document_id,
+        filename=chunk.document.filename,
+        text=chunk.text,
+        similarity=similarity,
+        position=DocumentPositionOut(**position.model_dump()),
+        citation=position.render(),
+    )
 
 
 def _to_out(document: Document, chunk_count: int) -> DocumentOut:

@@ -146,6 +146,15 @@ class Settings(BaseSettings):
         "text/markdown,"
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+    # 8e-1 UI citation floor. search_chunks returns top-k regardless of
+    # closeness — fine for the model (it reads excerpts and judges), NOT fine
+    # for the UI, where a weak match rendered as a citation asserts confidence
+    # the number doesn't support. POST /documents/search omits results below
+    # this cosine similarity entirely. Deliberately independent of, and lower
+    # than, memory_retrieval_min_similarity (0.7): document retrieval casts a
+    # wider net than personal-memory recall, and this gate drops topical noise
+    # rather than tuning recall. Ops-tunable per corpus.
+    document_search_min_similarity: float = 0.5
 
     @property
     def cors_origins(self) -> list[str]:
