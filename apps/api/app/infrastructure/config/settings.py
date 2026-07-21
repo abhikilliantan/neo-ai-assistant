@@ -136,6 +136,16 @@ class Settings(BaseSettings):
     document_max_bytes: int = 10_000_000  # 10 MB
     document_max_pages: int = 500
     document_parse_timeout_seconds: float = 30.0
+    # 8c allowlist of accepted upload content types (comma-separated). The part's
+    # declared type is ATTACKER-CONTROLLED, so only these are accepted; anything
+    # else → 415. Kept as a security-tunable setting (like n8n_allowed_hosts),
+    # not a hard-coded constant, so ops can widen/narrow it per deployment.
+    document_allowed_content_types: str = (
+        "application/pdf,"
+        "text/plain,"
+        "text/markdown,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
 
     @property
     def cors_origins(self) -> list[str]:
@@ -144,6 +154,12 @@ class Settings(BaseSettings):
     @property
     def n8n_allowed_hosts_list(self) -> list[str]:
         return [h.strip().lower() for h in self.n8n_allowed_hosts.split(",") if h.strip()]
+
+    @property
+    def document_allowed_content_types_set(self) -> frozenset[str]:
+        return frozenset(
+            t.strip().lower() for t in self.document_allowed_content_types.split(",") if t.strip()
+        )
 
     @property
     def is_prod(self) -> bool:

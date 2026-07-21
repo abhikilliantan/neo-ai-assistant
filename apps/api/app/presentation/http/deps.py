@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.agents import AgentRegistry
+from app.ai.documents import DocumentIngestService
 from app.ai.tools import ToolRegistry
 from app.ai.workflows import WorkflowRegistry
 from app.ai.workflows.urlguard import Resolver, system_resolver
@@ -124,8 +125,15 @@ def get_document_parser(request: Request) -> DocumentParser:
 
 
 def get_chunker(request: Request) -> Chunker:
-    """Built once in the lifespan. NO route consumes this yet — 8c wires it."""
+    """Built once in the lifespan. Consumed indirectly via the ingest service."""
     return request.app.state.chunker  # type: ignore[no-any-return]
+
+
+def get_document_ingest(request: Request) -> DocumentIngestService:
+    """The 8b ingest pipeline, built once in the lifespan. Consumed by 8c's
+    upload route. Its constructor already ran the token-cap guard at startup.
+    """
+    return request.app.state.document_ingest  # type: ignore[no-any-return]
 
 
 def get_app_settings(request: Request) -> Settings:
@@ -173,6 +181,7 @@ WorkflowRegistryDep = Annotated[WorkflowRegistry, Depends(get_workflow_registry)
 WorkflowUrlResolverDep = Annotated[Resolver, Depends(get_workflow_url_resolver)]
 DocumentParserDep = Annotated[DocumentParser, Depends(get_document_parser)]
 ChunkerDep = Annotated[Chunker, Depends(get_chunker)]
+DocumentIngestDep = Annotated[DocumentIngestService, Depends(get_document_ingest)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 
@@ -190,24 +199,41 @@ def get_access_payload(
 AccessPayloadDep = Annotated[TokenPayload, Depends(get_access_payload)]
 
 
+# Sentinel tenant for "no active org". Set explicitly (rather than leaving the
+# GUC unset) so `current_setting('app.current_tenant', true)::uuid` never sees
+# the post-commit placeholder reset value '' — which ERRORS on the ::uuid cast
+# rather than returning zero rows (the 8b landmine). gen_random_uuid() never
+# produces all-zeros, so nil matches no organization → RLS returns 0 rows.
+NIL_TENANT = "00000000-0000-0000-0000-000000000000"
+
+
+async def set_tenant_guc(session: AsyncSession, tenant_id: UUID | str | None) -> None:
+    """ALWAYS set `app.current_tenant` (transaction-local, SET LOCAL semantics).
+
+    Never leave it unset: a pooled connection whose placeholder GUC has reset to
+    '' would make every RLS predicate 500 on the ::uuid cast. When there's no
+    tenant we set the nil sentinel, which safely matches nothing. set_config(...,
+    true) is the transaction-local form and accepts bind params (`SET` does not).
+    """
+    value = str(tenant_id) if tenant_id is not None else NIL_TENANT
+    await session.execute(
+        text("SELECT set_config('app.current_tenant', :t, true)").bindparams(t=value)
+    )
+
+
 async def get_tenant_session(
     db: Annotated[Database, Depends(get_app_database)],
     payload: AccessPayloadDep,
 ) -> AsyncIterator[AsyncSession]:
     """neo_app session with `app.current_tenant` GUC set (SET LOCAL semantics).
 
-    If the caller's token has no tenant_id (user has no active org), we
-    intentionally DO NOT set the GUC — RLS then returns 0 rows on tenant
-    tables (safe default). set_config(..., true) is the transaction-local
-    equivalent of `SET LOCAL`, and it accepts bind parameters (`SET` does not).
+    The GUC is ALWAYS set via set_tenant_guc — to the caller's tenant, or the nil
+    sentinel when the token has no tenant_id. A no-tenant caller then sees 0 rows
+    on tenant tables (safe default) WITHOUT risking the '' ::uuid-cast 500 that a
+    recycled pooled connection would otherwise trigger.
     """
     async with db.sessionmaker() as session, session.begin():
-        if payload.tenant_id is not None:
-            await session.execute(
-                text("SELECT set_config('app.current_tenant', :t, true)").bindparams(
-                    t=payload.tenant_id
-                )
-            )
+        await set_tenant_guc(session, payload.tenant_id)
         yield session
 
 

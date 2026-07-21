@@ -14,7 +14,12 @@ from app.shared.exceptions.ai import (
     ProviderUnavailableError,
 )
 from app.shared.exceptions.auth import AuthenticationError, EmailAlreadyRegisteredError
-from app.shared.exceptions.common import NotFoundError
+from app.shared.exceptions.common import BadRequestError, NotFoundError
+from app.shared.exceptions.documents import (
+    DocumentParseError,
+    DocumentTooLargeError,
+    UnsupportedContentTypeError,
+)
 from app.shared.exceptions.embeddings import (
     EmbeddingProviderAPIError,
     EmbeddingProviderAuthError,
@@ -148,6 +153,39 @@ async def _not_found_handler(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _bad_request_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("bad_request", str(exc) or "bad request"),
+        status_code=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+# --- document upload (8c). Fixed, non-leaking messages — the file is untrusted,
+# so we never echo its content-type/filename/bytes back in an error string.
+
+
+async def _document_too_large_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("document_too_large", "uploaded document exceeds the size limit"),
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+    )
+
+
+async def _unsupported_content_type_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        _error_body("unsupported_content_type", "unsupported document content type"),
+        status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    )
+
+
+async def _document_parse_handler(_: Request, exc: Exception) -> JSONResponse:
+    # A corrupt/too-slow document is the client's file — 422, not a 5xx.
+    return JSONResponse(
+        _error_body("document_unprocessable", "the document could not be processed"),
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+
+
 async def _embedding_auth_handler(_: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         _error_body(
@@ -192,6 +230,13 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_handler)
     app.add_exception_handler(EmailAlreadyRegisteredError, _email_taken_handler)
     app.add_exception_handler(NotFoundError, _not_found_handler)
+    app.add_exception_handler(BadRequestError, _bad_request_handler)
+    # Document upload: register the SUBCLASSES (too-large, unsupported-type)
+    # before the DocumentParseError base so each keeps its specific status. Both
+    # subclass DocumentParseError; Starlette dispatches by exact type first.
+    app.add_exception_handler(DocumentTooLargeError, _document_too_large_handler)
+    app.add_exception_handler(UnsupportedContentTypeError, _unsupported_content_type_handler)
+    app.add_exception_handler(DocumentParseError, _document_parse_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(ProviderAuthError, _provider_auth_handler)
     app.add_exception_handler(ProviderRateLimitError, _provider_rate_limit_handler)

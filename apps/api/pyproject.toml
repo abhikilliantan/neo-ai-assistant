@@ -23,6 +23,7 @@ dependencies = [
     "email-validator>=2.2",
     "anthropic>=0.40",
     "pgvector>=0.3",
+    "python-multipart>=0.0.12",
 ]
 
 [dependency-groups]

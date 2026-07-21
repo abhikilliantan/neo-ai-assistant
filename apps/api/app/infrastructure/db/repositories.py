@@ -421,6 +421,44 @@ class DocumentRepository:
     async def get_document(self, document_id: UUID) -> Document | None:
         return await self.session.get(Document, document_id)
 
+    async def list_for_org_with_chunk_counts(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[tuple[Document, int]]:
+        """Documents for the org, newest first, each with its live chunk count.
+
+        One query (LEFT JOIN a grouped count subquery) instead of N+1 counts.
+        RLS scopes to the tenant; the explicit organization_id keeps app-layer
+        intent audit-visible, matching the other repos.
+        """
+        counts = (
+            select(
+                DocumentChunk.document_id.label("document_id"),
+                func.count().label("n"),
+            )
+            .where(DocumentChunk.deleted_at.is_(None))
+            .group_by(DocumentChunk.document_id)
+            .subquery()
+        )
+        stmt = (
+            select(Document, func.coalesce(counts.c.n, 0))
+            .outerjoin(counts, counts.c.document_id == Document.id)
+            .where(Document.organization_id == organization_id)
+        )
+        if active_only:
+            stmt = stmt.where(Document.deleted_at.is_(None))
+        stmt = stmt.order_by(Document.created_at.desc(), Document.id.desc())
+        rows = (await self.session.execute(stmt)).all()
+        return [(doc, int(n)) for doc, n in rows]
+
+    async def count_chunks(self, document_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.deleted_at.is_(None))
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
+
     async def list_chunks(
         self, document_id: UUID, *, active_only: bool = True
     ) -> list[DocumentChunk]:

@@ -153,3 +153,16 @@ export type Preference = {
   key: string;
   value: unknown;
 };
+
+// --- documents (mirrors backend DocumentOut whitelist) ---
+// full_text is intentionally absent — it can be enormous and never crosses the
+// API boundary, same discipline as Memory omitting the embedding.
+export type Document = {
+  id: string;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  status: string;
+  chunk_count: number;
+  created_at: string;
+};
