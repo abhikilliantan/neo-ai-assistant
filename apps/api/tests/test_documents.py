@@ -13,6 +13,7 @@ from itertools import pairwise
 import pytest
 
 from app.ai.documents import (
+    ContentTypeDocumentParser,
     FixedSizeChunker,
     MockDocumentParser,
     build_chunker,
@@ -219,8 +220,12 @@ def test_chunker_rejects_bad_config() -> None:
 # --- builders ---------------------------------------------------------------
 
 
-def test_build_document_parser_returns_mock_on_mock() -> None:
-    assert isinstance(build_document_parser(_base()), MockDocumentParser)
+def test_build_document_parser_dispatches_text_vs_mock_fallback() -> None:
+    # 8f-1: the builder now returns a content-type dispatcher whose fallback is
+    # the mock (still the CI/test default for pdf/docx).
+    parser = build_document_parser(_base())
+    assert isinstance(parser, ContentTypeDocumentParser)
+    assert isinstance(parser._fallback, MockDocumentParser)
 
 
 def test_build_document_parser_raises_not_implemented_on_real_parser() -> None:
@@ -248,11 +253,11 @@ def test_documents_enabled_false_is_inert_this_slice() -> None:
     """Nothing consumes `documents_enabled` yet — it mirrors tools_enabled /
     workflows_enabled, whose builders also ignore their switch; a route-level
     gate lands in 8c/8d. Flipping it False changes nothing observable: the
-    parser is still the mock and the chunker is still built.
+    parser dispatcher is still built and the chunker is still built.
     """
     settings = _base(documents_enabled=False)
     assert settings.documents_enabled is False
-    assert isinstance(build_document_parser(settings), MockDocumentParser)
+    assert isinstance(build_document_parser(settings), ContentTypeDocumentParser)
     assert isinstance(build_chunker(settings), FixedSizeChunker)
 
 
@@ -260,7 +265,10 @@ def test_documents_enabled_false_is_inert_this_slice() -> None:
 
 
 def test_db_app_pins_parser_and_chunker_on_state(db_app) -> None:  # type: ignore[no-untyped-def]
-    assert isinstance(db_app.state.document_parser, MockDocumentParser)
+    # 8f-1: the pinned parser is the content-type dispatcher; its non-text
+    # fallback is still the mock (the CI/test default).
+    assert isinstance(db_app.state.document_parser, ContentTypeDocumentParser)
+    assert isinstance(db_app.state.document_parser._fallback, MockDocumentParser)
     assert isinstance(db_app.state.chunker, FixedSizeChunker)
 
 

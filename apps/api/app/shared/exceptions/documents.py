@@ -25,6 +25,15 @@ class UnsupportedContentTypeError(DocumentParseError):
     """The parser does not handle this content type."""
 
 
+class DocumentDecodeError(DocumentParseError):
+    """The bytes could not be decoded as text (8f-1: tried utf-8-sig then utf-8).
+
+    Deliberately does NOT fall back to a lossy codec: a rejected upload (→ 422,
+    inherited from DocumentParseError) beats silently corrupted text the user
+    can't tell is wrong. The message never contains byte content.
+    """
+
+
 class DocumentConfigError(Exception):
     """Misconfiguration that would corrupt ingest — raised at BUILD time, loudly.
 

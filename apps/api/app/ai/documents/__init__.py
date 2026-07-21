@@ -16,27 +16,37 @@ Nothing consumes either yet — 8a is the contracts/mock slice; 8c wires ingest.
 from __future__ import annotations
 
 from app.ai.documents.chunker import FixedSizeChunker
+from app.ai.documents.dispatch import ContentTypeDocumentParser
 from app.ai.documents.ingest import (
     DocumentIngestService,
     validate_chunk_size_within_token_cap,
 )
 from app.ai.documents.mock import MockDocumentParser
+from app.ai.documents.text import TextDocumentParser
 from app.application.ports.documents import Chunker, DocumentParser
 from app.application.ports.embeddings import EmbeddingProvider
 from app.infrastructure.config import Settings
 
 
 def build_document_parser(settings: Settings) -> DocumentParser:
-    """Wire the concrete parser from settings.document_parser. Fail-fast on the
-    unknown branch, same posture as build_chat_provider.
+    """Wire the parser: a content-type dispatcher that routes text/plain and
+    text/markdown to the real TextDocumentParser (8f-1) and everything else to
+    the `document_parser`-selected fallback.
+
+    The fallback is still the mock (the CI/test default) — PDF/DOCX real parsing
+    lands in a later 8f slice, so DOCUMENT_PARSER=unstructured still fails fast.
     """
+    text_parser = TextDocumentParser(max_bytes=settings.document_max_bytes)
     if settings.document_parser == "mock":
-        return MockDocumentParser(max_bytes=settings.document_max_bytes)
-    if settings.document_parser == "unstructured":
+        fallback: DocumentParser = MockDocumentParser(max_bytes=settings.document_max_bytes)
+    elif settings.document_parser == "unstructured":
         raise NotImplementedError(
-            "DOCUMENT_PARSER=unstructured is not implemented until 8f; use 'mock' for now"
+            "DOCUMENT_PARSER=unstructured (real PDF/DOCX) is not implemented until a "
+            "later 8f slice; use 'mock' for now"
         )
-    raise RuntimeError(f"Unknown DOCUMENT_PARSER: {settings.document_parser!r}")
+    else:
+        raise RuntimeError(f"Unknown DOCUMENT_PARSER: {settings.document_parser!r}")
+    return ContentTypeDocumentParser(text_parser=text_parser, fallback=fallback)
 
 
 def build_chunker(settings: Settings) -> Chunker:
@@ -69,9 +79,11 @@ def build_document_ingest_service(
 
 
 __all__ = [
+    "ContentTypeDocumentParser",
     "DocumentIngestService",
     "FixedSizeChunker",
     "MockDocumentParser",
+    "TextDocumentParser",
     "build_chunker",
     "build_document_ingest_service",
     "build_document_parser",
