@@ -30,6 +30,7 @@ from uuid import UUID
 
 from app.ai.tools.echo import EchoTool
 from app.ai.tools.registry import ToolRegistry
+from app.ai.tools.search_documents import DocumentRepoFactory, SearchDocumentsTool
 from app.ai.tools.search_memory import MemoryRepoFactory, SearchMemoryTool
 from app.ai.tools.workflow import WorkflowTool
 from app.ai.workflows.registry import WorkflowRegistry
@@ -53,7 +54,10 @@ def _stateless_tools() -> list[Tool]:
 #   - a new WORKFLOW reaches ONLY the workflow-capable agent (operator), never
 #     the default read-only agent, with no edit here.
 # Keep this in lockstep with what the request builders register below.
-READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({"echo", "search_memory"})
+# search_documents (8d) is READ-ONLY — a lookup with no side effect — so it
+# reaches the DEFAULT agent, unlike workflows (which are the side-effecting set
+# gated behind 7d's consent boundary).
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({"echo", "search_memory", "search_documents"})
 
 
 def _assert_all_tools_classified(
@@ -145,6 +149,7 @@ def build_streaming_request_tool_registry(
     *,
     settings: Settings,
     memory_repo_factory: MemoryRepoFactory,
+    document_repo_factory: DocumentRepoFactory,
     embedding_provider: EmbeddingProvider,
     organization_id: UUID,
     user_id: UUID,
@@ -180,6 +185,15 @@ def build_streaming_request_tool_registry(
             user_id=user_id,
         )
     )
+    # 8d: search_documents — tenant-scoped (no user_id), bound to the same
+    # short-per-call session discipline via its own factory.
+    registry.register(
+        SearchDocumentsTool(
+            document_repo_factory=document_repo_factory,
+            embedding_provider=embedding_provider,
+            organization_id=organization_id,
+        )
+    )
     if settings.workflows_enabled:
         _merge_workflow_tools(registry, workflow_registry, workflow_client)
     # 7d: every tool that reaches the model must be classified (read-only or
@@ -190,8 +204,10 @@ def build_streaming_request_tool_registry(
 
 __all__ = [
     "READ_ONLY_TOOL_NAMES",
+    "DocumentRepoFactory",
     "EchoTool",
     "MemoryRepoFactory",
+    "SearchDocumentsTool",
     "SearchMemoryTool",
     "ToolRegistry",
     "WorkflowTool",

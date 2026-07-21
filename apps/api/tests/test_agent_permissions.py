@@ -247,7 +247,7 @@ async def _names_for_agent(db_app: Any, *, agent: str | None) -> set[str]:
 async def test_default_agent_never_offered_the_workflow(db_app) -> None:  # type: ignore[no-untyped-def]
     names = await _names_for_agent(db_app, agent=None)
     assert "create_task" not in names
-    assert {"echo", "search_memory"} == names
+    assert {"echo", "search_memory", "search_documents"} == names
 
 
 @pytest.mark.asyncio

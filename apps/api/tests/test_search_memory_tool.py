@@ -368,10 +368,15 @@ async def test_chat_e2e_search_memory_surfaces_content_and_stays_ephemeral(
         assert "Priya" in msgs[1]["content"]
 
     # Endpoint offered the read-only tools. 7d: the default agent no longer
-    # gets create_task (workflows require the operator agent).
+    # gets create_task (workflows require the operator agent). 8d: search_documents
+    # is read-only, so the default agent DOES get it.
     assert scripted.tools_seen
     assert scripted.tools_seen[-1] is not None
-    assert {s["name"] for s in scripted.tools_seen[-1]} == {"echo", "search_memory"}
+    assert {s["name"] for s in scripted.tools_seen[-1]} == {
+        "echo",
+        "search_memory",
+        "search_documents",
+    }
 
 
 # --- tools_enabled=False still overrides the request registry ---------------

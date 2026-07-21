@@ -30,6 +30,7 @@ from sqlalchemy import text
 
 from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner, agent_for_request
 from app.ai.tools import build_streaming_request_tool_registry
+from app.ai.tools.search_documents import DocumentRepoFactory
 from app.ai.tools.search_memory import MemoryRepoFactory
 from app.ai.workflows.registry import WorkflowRegistry
 from app.ai.workflows.tenant import resolve_request_workflows
@@ -38,11 +39,12 @@ from app.application.ports.agents import AgentDefinition
 from app.application.ports.chat import ChatMessage, ChatProvider, ToolExecutor
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.memory_extraction import MemoryExtractor
-from app.application.ports.repositories import MemoryRepositoryPort
+from app.application.ports.repositories import DocumentRepositoryPort, MemoryRepositoryPort
 from app.application.ports.workflows import WorkflowClient
 from app.infrastructure.db import Database
 from app.infrastructure.db.repositories import (
     ConversationRepository,
+    DocumentRepository,
     MemoryRepository,
     MessageRepository,
 )
@@ -60,6 +62,7 @@ from app.presentation.http.deps import (
     get_app_database,
     get_embedding_provider,
     get_memory_extractor,
+    set_tenant_guc,
 )
 from app.presentation.http.schemas.chat import ChatRequest, ChatResponse
 from app.shared.exceptions.ai import (
@@ -389,6 +392,7 @@ async def chat(
         request_registry = build_streaming_request_tool_registry(
             settings=settings,
             memory_repo_factory=_make_streaming_memory_repo_factory(db, tenant_id=tenant_id),
+            document_repo_factory=_make_streaming_document_repo_factory(db, tenant_id=tenant_id),
             embedding_provider=embedding_provider,
             organization_id=tenant_id,
             user_id=user.id,
@@ -477,6 +481,22 @@ def _make_streaming_memory_repo_factory(db: Database, *, tenant_id: UUID) -> Mem
                 )
             )
             yield MemoryRepository(session)
+
+    return _factory
+
+
+def _make_streaming_document_repo_factory(db: Database, *, tenant_id: UUID) -> DocumentRepoFactory:
+    """Document twin of `_make_streaming_memory_repo_factory`: opens a SHORT-lived
+    tenant session per search_documents call (set GUC → search → close), so no DB
+    connection is pinned across the LLM stream. Uses the 8c `set_tenant_guc`
+    helper so the nil-sentinel/'' landmine is handled in one place.
+    """
+
+    @asynccontextmanager
+    async def _factory() -> AsyncIterator[DocumentRepositoryPort]:
+        async with db.sessionmaker() as session, session.begin():
+            await set_tenant_guc(session, tenant_id)
+            yield DocumentRepository(session)
 
     return _factory
 
@@ -684,6 +704,7 @@ async def chat_stream(
         streaming_registry = build_streaming_request_tool_registry(
             settings=settings,
             memory_repo_factory=_make_streaming_memory_repo_factory(db, tenant_id=tenant_id),
+            document_repo_factory=_make_streaming_document_repo_factory(db, tenant_id=tenant_id),
             embedding_provider=embedding_provider,
             organization_id=tenant_id,
             user_id=user.id,

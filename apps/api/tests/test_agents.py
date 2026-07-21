@@ -114,8 +114,9 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     assistant = registry.get("assistant")
     assert assistant is not None
     assert assistant.system_prompt == ""
-    # 7d: default agent is READ-ONLY now — no None, no workflow.
-    assert assistant.tool_names == ["echo", "search_memory"]
+    # 7d: default agent is READ-ONLY now — no None, no workflow. 8d added
+    # search_documents (read-only), sorted into the read-only set.
+    assert assistant.tool_names == ["echo", "search_documents", "search_memory"]
     assert "create_task" not in (assistant.tool_names or [])
 
     # 6h: recall persona exercises BOTH persona injection and tool subset.
@@ -128,7 +129,7 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     # 7d: operator owns workflows — read-only tools PLUS every workflow name.
     operator = registry.get("operator")
     assert operator is not None
-    assert operator.tool_names == ["echo", "search_memory", "create_task"]
+    assert operator.tool_names == ["echo", "search_documents", "search_memory", "create_task"]
     assert operator.system_prompt.startswith("You are Neo in operator mode.")
     # Its description reads like a consent prompt (shown in the picker).
     assert "actions" in operator.description.lower()

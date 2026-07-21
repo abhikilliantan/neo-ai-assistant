@@ -301,4 +301,8 @@ async def test_default_agent_never_gets_tenant_workflows(db_app, app_session_fac
 
     assert "tenant_action" in operator_names  # per-request permission granted
     assert "tenant_action" not in default_names  # 7d boundary holds for tenant data
-    assert default_names == {"echo", "search_memory"}  # read-only, no workflows at all
+    assert default_names == {
+        "echo",
+        "search_memory",
+        "search_documents",
+    }  # read-only, no workflows at all

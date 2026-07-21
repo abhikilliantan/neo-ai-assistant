@@ -9,6 +9,7 @@ from uuid import UUID
 if TYPE_CHECKING:
     from app.infrastructure.db.models import (
         Conversation,
+        DocumentChunk,
         Membership,
         Memory,
         Message,
@@ -122,6 +123,23 @@ class MemoryRepositoryPort(Protocol):
     ) -> list[Memory]: ...
     async def get_by_id(self, memory_id: UUID) -> Memory | None: ...
     async def soft_delete(self, memory_id: UUID) -> None: ...
+
+
+class DocumentRepositoryPort(Protocol):
+    """Tenant-scoped document-chunk search (8d). Deferred in 8b until a consumer
+    existed; search_documents is that consumer, mirroring how MemoryRepositoryPort
+    was introduced by search_memory. Only the method the tool needs is on the
+    port — searching. Note: NO user_id — documents are ORG-scoped, not per-user.
+    """
+
+    async def search_chunks(
+        self,
+        *,
+        organization_id: UUID,
+        query_embedding: list[float],
+        limit: int = 5,
+        embedding_model: str | None = None,
+    ) -> list[tuple[DocumentChunk, float]]: ...
 
 
 class UserPreferenceRepositoryPort(Protocol):

@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import contains_eager
 
 from app.application.ports.documents import DocumentChunk as DocumentChunkVO
 from app.infrastructure.db.models import (
@@ -403,11 +404,17 @@ class DocumentRepository:
         across rows from different models is numerically meaningless. When set,
         only rows tagged with this exact model are considered — a model swap
         can't poison results with foreign-vector-space rows.
+
+        The parent `Document` is eager-loaded via `contains_eager` on the same
+        join used for the soft-delete filter, so a caller can read
+        `chunk.document.filename` after the session closes (8d citations) without
+        a lazy load — `expire_on_commit=False` keeps it live post-commit.
         """
         distance = DocumentChunk.embedding.cosine_distance(query_embedding).label("distance")
         stmt = (
             select(DocumentChunk, distance)
-            .join(Document, DocumentChunk.document_id == Document.id)
+            .join(DocumentChunk.document)
+            .options(contains_eager(DocumentChunk.document))
             .where(DocumentChunk.organization_id == organization_id)
             .where(DocumentChunk.deleted_at.is_(None))
             .where(Document.deleted_at.is_(None))

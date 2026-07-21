@@ -112,6 +112,7 @@ def _build_registry(
     return build_streaming_request_tool_registry(
         settings=settings or _base(),
         memory_repo_factory=_unused_factory,  # type: ignore[arg-type]
+        document_repo_factory=_unused_factory,  # type: ignore[arg-type]
         embedding_provider=MockEmbeddingProvider(),
         organization_id=uuid4(),
         user_id=uuid4(),

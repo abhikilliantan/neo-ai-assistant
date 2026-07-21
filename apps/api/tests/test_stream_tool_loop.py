@@ -180,10 +180,14 @@ async def test_stream_runs_search_memory_via_short_session_factory_and_folds_int
         # before calling the executor).
         assert "Priya" in joined
         # Endpoint saw the read-only tools. 7d: the DEFAULT agent no longer
-        # receives create_task (workflows require the operator agent), so the
-        # tool set here is echo + search_memory only.
+        # receives create_task (workflows require the operator agent). 8d:
+        # search_documents is read-only, so it IS in the default set.
         assert scripted.tools_seen[-1] is not None
-        assert {s["name"] for s in scripted.tools_seen[-1]} == {"echo", "search_memory"}
+        assert {s["name"] for s in scripted.tools_seen[-1]} == {
+            "echo",
+            "search_memory",
+            "search_documents",
+        }
         assert scripted.executor_seen[-1] is not None
 
         # Ephemeral guarantee still holds on the stream path.
@@ -544,5 +548,10 @@ async def test_chat_stream_tools_enabled_true_passes_registered_specs(
 
     assert spy.calls[-1]["tools"] is not None
     # 7d: the default agent is read-only — create_task is NOT offered here.
-    assert {s["name"] for s in spy.calls[-1]["tools"]} == {"echo", "search_memory"}
+    # 8d: search_documents is read-only, so it IS offered.
+    assert {s["name"] for s in spy.calls[-1]["tools"]} == {
+        "echo",
+        "search_memory",
+        "search_documents",
+    }
     assert spy.calls[-1]["tool_executor"] is not None
