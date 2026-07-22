@@ -23,6 +23,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 
 RUN useradd --create-home --uid 1000 neo
+# ADR 0002: original-file storage root, owned by neo so a fresh named volume
+# mounted here inherits neo ownership — a root-owned mountpoint would deny the
+# non-root process on first write. Path matches settings.document_storage_root.
+RUN mkdir -p /var/neo/documents && chown -R neo:neo /var/neo
 WORKDIR /app
 
 COPY --from=builder --chown=neo:neo /app /app
