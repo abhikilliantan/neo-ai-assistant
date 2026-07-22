@@ -27,6 +27,8 @@ from app.ai.documents.ingest import DocumentIngestService
 from app.ai.documents.mock import MockDocumentParser
 from app.application.ports.embeddings import EmbeddingResult, InputType
 from app.infrastructure.db.models import Document
+from app.infrastructure.storage import probe_storage_writable
+from app.infrastructure.storage.filesystem import LocalFilesystemStorage
 from app.shared.exceptions.embeddings import EmbeddingProviderUnavailableError
 
 _PDF = "application/pdf"
@@ -44,10 +46,13 @@ def _auth(reg: dict[str, Any]) -> dict[str, str]:
     return {"Authorization": f"Bearer {reg['access_token']}"}
 
 
+def _files_under(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*") if p.is_file()]
+
+
 def _stored_files(app: FastAPI) -> list[Path]:
     """Every regular file currently in the store's root (a per-test temp dir)."""
-    root = Path(app.state.storage._root)  # test introspection of the FS backend root
-    return [p for p in root.rglob("*") if p.is_file()]
+    return _files_under(Path(app.state.storage._root))  # FS backend root introspection
 
 
 async def _load_doc(app_session_factory: Any, tenant: UUID, doc_id: UUID) -> Document | None:
@@ -234,3 +239,44 @@ async def test_cross_tenant_cannot_obtain_another_tenants_storage_key(
     alice_doc = await _load_doc(app_session_factory, a_tenant, doc_id)
     assert alice_doc is not None and alice_doc.storage_key is not None
     assert await db_app.state.storage.get(key=alice_doc.storage_key) == b"alice secret bytes"
+
+
+# --- startup writability probe (ADR 0002 slice 1 hardening) -------------------
+
+
+@pytest.mark.asyncio
+async def test_probe_passes_and_cleans_up_on_writable_root(tmp_path: Path) -> None:
+    storage = LocalFilesystemStorage(root=str(tmp_path))
+    await probe_storage_writable(storage, root=str(tmp_path))  # must not raise
+    # The sentinel is always deleted → nothing left behind in the root.
+    assert _files_under(tmp_path) == []
+
+
+class _ReadOnlyStorage:
+    """Simulates a root-owned / read-only volume: put is denied. Deterministic and
+    independent of the runtime user (a chmod-based test would falsely pass as root)."""
+
+    backend_id = "filesystem"
+
+    async def put(self, *, key: str, data: bytes, content_type: str) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    async def get(self, *, key: str) -> bytes:  # pragma: no cover - never reached
+        raise RuntimeError("unreachable")
+
+    async def delete(self, *, key: str) -> None:
+        pass
+
+    async def exists(self, *, key: str) -> bool:  # pragma: no cover
+        return False
+
+
+@pytest.mark.asyncio
+async def test_probe_fails_fast_with_clear_message_on_unwritable_root() -> None:
+    root = "/var/neo/documents"
+    with pytest.raises(RuntimeError) as ei:
+        await probe_storage_writable(_ReadOnlyStorage(), root=root)
+    msg = str(ei.value)
+    assert root in msg  # names the storage root
+    assert "will not start" in msg  # refuses the boot
+    assert "Permission denied" in msg  # surfaces the underlying OS error

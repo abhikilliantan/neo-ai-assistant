@@ -195,6 +195,7 @@ async def test_lifespan_logs_agents_line(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(main_mod, "build_redis", lambda _s: fake_redis)
     monkeypatch.setattr(main_mod, "build_chat_provider", lambda _s: fake_provider)
     monkeypatch.setattr(main_mod, "build_embedding_provider", lambda _s: fake_embed)
+    monkeypatch.setattr(main_mod, "probe_storage_writable", AsyncMock())
     monkeypatch.setattr(main_mod, "build_memory_extractor", lambda _s, _p: MagicMock())
     monkeypatch.setattr(main_mod, "DatabaseHealthCheck", lambda **_kw: MagicMock())
     monkeypatch.setattr(main_mod, "RedisHealthCheck", lambda **_kw: MagicMock())

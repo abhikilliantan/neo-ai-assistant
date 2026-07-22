@@ -30,7 +30,7 @@ from app.infrastructure.config import Settings, get_settings
 from app.infrastructure.db import build_database, build_system_database
 from app.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
 from app.infrastructure.logging import configure_logging, get_logger
-from app.infrastructure.storage import build_storage_provider
+from app.infrastructure.storage import build_storage_provider, probe_storage_writable
 from app.presentation.http.routers import (
     agents_router,
     auth_router,
@@ -71,6 +71,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # ADR 0002: original-file store. Bytes live outside the DB behind this port.
     storage = build_storage_provider(settings)  # fail-fast if misconfigured
+    # Fail-fast at BOOT if the storage root isn't writable (e.g. a root-owned
+    # volume) — a clear error naming the root beats 500-ing the first upload.
+    await probe_storage_writable(storage, root=settings.document_storage_root)
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
