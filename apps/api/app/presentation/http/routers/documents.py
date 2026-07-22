@@ -15,12 +15,15 @@ failure rolls the whole thing back (zero documents, zero chunks).
 from __future__ import annotations
 
 import asyncio
-from uuid import UUID
+import contextlib
+import hashlib
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import Response
 
 from app.application.ports.documents import DocumentPosition
+from app.application.ports.storage import StorageProvider
 from app.infrastructure.db.models import Document, DocumentChunk
 from app.infrastructure.db.repositories import DocumentRepository
 from app.presentation.http.deps import (
@@ -29,6 +32,7 @@ from app.presentation.http.deps import (
     DocumentIngestDep,
     EmbeddingProviderDep,
     SettingsDep,
+    StorageDep,
     TenantSessionDep,
 )
 from app.presentation.http.multipart import read_upload
@@ -53,31 +57,44 @@ async def upload_document(
     session: TenantSessionDep,
     settings: SettingsDep,
     ingest: DocumentIngestDep,
+    storage: StorageDep,
 ) -> DocumentOut:
-    # ⚠️ NO-ORIGINAL-STORAGE DECISION (8c): we persist only the extracted
-    # full_text (8b), never the uploaded bytes. Consequence: when 8f ships a
-    # better parser, its improvements apply ONLY to NEW uploads — re-indexing an
-    # existing corpus means the user must RE-UPLOAD, since the original bytes are
-    # gone. Therefore original-file storage (object storage or a volume, with
-    # retention/deletion) is a GO-LIVE GATE, not a nice-to-have: it must land
-    # BEFORE real tenants ingest real volume, or that corpus is permanently
-    # stuck on whatever parser extracted it the first time.
+    # ADR 0002 — original-file storage. Bytes are retained OUTSIDE the DB behind a
+    # StorageProvider; the row keeps only an opaque pointer + provenance + hash.
+    # The WRITE ORDERING is the whole point (ADR 0002 "Write ordering"):
+    #   (a) cheap validations needing no bytes run FIRST — the 415 gate — so a
+    #       rejected type NEVER writes to the store (no guaranteed orphan);
+    #   (b) store the bytes, computing content_sha256 in the same pass;
+    #   (c) parse/chunk/embed — a 422 decode failure or ANY ingest error fires the
+    #       compensating delete of the just-stored bytes;
+    #   (d) the row commits LAST (at tenant-session teardown) carrying the pointer.
+    # Failing this way leaves the "no partial document" guarantee intact: a failure
+    # after store leaves NO row AND no orphaned bytes.
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
 
     # Streaming size guard + multipart parse (→413 oversized / →400 malformed).
+    # Bytes are read into memory here but NOT yet written to the store.
     upload = await read_upload(request, max_bytes=settings.document_max_bytes)
 
-    # The part's declared content-type is ATTACKER-CONTROLLED. Normalize (drop
-    # params, lowercase) and check against the allowlist → 415 if not accepted.
+    # (a) 415 gate — ATTACKER-CONTROLLED declared type. Normalize + allowlist
+    # check. This runs BEFORE any storage write, so a rejected type never orphans.
     declared_type = upload.content_type.split(";")[0].strip().lower()
     if declared_type not in settings.document_allowed_content_types_set:
         raise UnsupportedContentTypeError("unsupported document content type")
 
-    # Enforce the parse/processing budget at the call site. NOTE: wait_for cannot
-    # interrupt CPU-bound sync work — it only cancels at await points. Adequate
-    # for the mock/cooperative parser today; 8f's real parser needs process-level
-    # isolation to defend against a CPU/decompression bomb.
+    # (b) Store the original bytes. The key is org-scoped + server-minted (an
+    # opaque UUID the client never sees), so tenancy is enforced above the dumb
+    # store and traversal is impossible. content_sha256 is computed over the same
+    # in-memory bytes (single pass) as the integrity anchor for reprocessing.
+    storage_key = f"org/{tenant_id}/{uuid4()}"
+    content_sha256 = hashlib.sha256(upload.data).hexdigest()
+    await storage.put(key=storage_key, data=upload.data, content_type=declared_type)
+
+    # (c) Parse/chunk/embed inside the all-or-nothing ingest txn. NOTE: wait_for
+    # cannot interrupt CPU-bound sync work — it only cancels at await points.
+    # On ANY failure after the store, fire the compensating delete so the residue
+    # is nothing (no row, no bytes) rather than an orphaned object.
     try:
         document = await asyncio.wait_for(
             ingest.ingest(
@@ -87,16 +104,33 @@ async def upload_document(
                 filename=upload.filename,
                 content_type=declared_type,
                 data=upload.data,
+                storage_key=storage_key,
+                storage_backend=storage.backend_id,
+                content_sha256=content_sha256,
             ),
             timeout=settings.document_parse_timeout_seconds,
         )
+        chunk_count = await DocumentRepository(session).count_chunks(document.id)
     except TimeoutError as e:
+        await _compensate(storage, storage_key)
         # Timed-out processing collapses into the same client-facing 422 as a
         # corrupt document — the file couldn't be turned into a document.
         raise DocumentParseError("document processing timed out") from e
+    except Exception:
+        # 422 decode failure, embed error, DB error — anything after the store.
+        await _compensate(storage, storage_key)
+        raise
 
-    chunk_count = await DocumentRepository(session).count_chunks(document.id)
+    # (d) Success: the row commits with the pointer at tenant-session teardown.
     return _to_out(document, chunk_count)
+
+
+async def _compensate(storage: StorageProvider, storage_key: str) -> None:
+    """Best-effort delete of just-stored bytes after a post-store failure. Never
+    raises — a cleanup failure must not mask the original error; the reconciliation
+    sweep (later slice) is the authoritative backstop for the rare miss."""
+    with contextlib.suppress(Exception):
+        await storage.delete(key=storage_key)
 
 
 @router.get("/documents", response_model=list[DocumentOut])

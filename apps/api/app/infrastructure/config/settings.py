@@ -149,6 +149,14 @@ class Settings(BaseSettings):
     document_max_bytes: int = 10_000_000  # 10 MB
     document_max_pages: int = 500
     document_parse_timeout_seconds: float = 30.0
+    # ADR 0002 — original file storage. Bytes live OUTSIDE the DB behind a
+    # StorageProvider; the documents row keeps only an opaque pointer. Slice 1
+    # ships the single "filesystem" backend (S3/MinIO/Azure land later behind the
+    # same port). The root is a mounted Docker volume so stored files survive
+    # container recreation. NOTE: the pilot host must provide an ENCRYPTED volume
+    # for this root (ADR 0002 encryption-at-rest deployment precondition).
+    document_storage_backend: Literal["filesystem"] = "filesystem"
+    document_storage_root: str = "/var/neo/documents"
     # 8c allowlist of accepted upload content types (comma-separated). The part's
     # declared type is ATTACKER-CONTROLLED, so only these are accepted; anything
     # else → 415. Kept as a security-tunable setting (like n8n_allowed_hosts),

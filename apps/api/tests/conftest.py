@@ -11,7 +11,9 @@ Sessions come in three flavors:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -245,6 +247,7 @@ async def db_app(
     from app.ai.providers.mock import MockProvider
     from app.ai.tools import build_tool_registry
     from app.ai.workflows import MockWorkflowClient, build_workflow_registry
+    from app.infrastructure.storage.filesystem import LocalFilesystemStorage
 
     settings = Settings(
         python_env="test",
@@ -299,7 +302,14 @@ async def db_app(
         chunker=app.state.chunker,
         embedding_provider=app.state.embedding_provider,
     )
-    yield app
+    # ADR 0002: pin the real filesystem store rooted at a per-test temp dir —
+    # hermetic (no network), and cleaned up at teardown.
+    store_root = tempfile.mkdtemp(prefix="neo-doc-store-")
+    app.state.storage = LocalFilesystemStorage(root=store_root)
+    try:
+        yield app
+    finally:
+        shutil.rmtree(store_root, ignore_errors=True)
 
 
 @pytest_asyncio.fixture

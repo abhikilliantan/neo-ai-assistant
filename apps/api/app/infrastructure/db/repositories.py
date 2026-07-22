@@ -340,6 +340,9 @@ class DocumentRepository:
         byte_size: int,
         full_text: str,
         status: str = "ready",
+        storage_key: str | None = None,
+        storage_backend: str | None = None,
+        content_sha256: str | None = None,
     ) -> Document:
         doc = Document(
             organization_id=organization_id,
@@ -349,6 +352,9 @@ class DocumentRepository:
             byte_size=byte_size,
             full_text=full_text,
             status=status,
+            storage_key=storage_key,
+            storage_backend=storage_backend,
+            content_sha256=content_sha256,
         )
         self.session.add(doc)
         await self.session.flush()  # populate doc.id for chunk FKs

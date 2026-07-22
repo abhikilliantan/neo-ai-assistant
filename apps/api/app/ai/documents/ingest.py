@@ -92,9 +92,17 @@ class DocumentIngestService:
         filename: str,
         content_type: str,
         data: bytes,
+        storage_key: str | None = None,
+        storage_backend: str | None = None,
+        content_sha256: str | None = None,
     ) -> Document:
         """Parse → chunk → embed → persist, all-or-nothing. Raises on any
         failure; the caller's transaction rolls back → no partial rows.
+
+        ADR 0002: the original bytes are stored BEFORE this runs, at the route
+        boundary; the resulting pointer/provenance (`storage_key` etc.) is threaded
+        through to the row here. This service does not touch the store — a failure
+        here rolls back the row, and the caller fires the compensating delete.
         """
         parsed = await self._parser.parse(data=data, content_type=content_type)
 
@@ -106,6 +114,9 @@ class DocumentIngestService:
             content_type=content_type,
             byte_size=len(data),
             full_text=parsed.full_text,
+            storage_key=storage_key,
+            storage_backend=storage_backend,
+            content_sha256=content_sha256,
         )
 
         chunks = self._chunker.chunk(document_id=str(document.id), document=parsed)

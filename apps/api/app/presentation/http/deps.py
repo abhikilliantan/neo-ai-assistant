@@ -29,6 +29,7 @@ from app.application.ports.documents import Chunker, DocumentParser
 from app.application.ports.embeddings import EmbeddingProvider
 from app.application.ports.health import HealthCheck
 from app.application.ports.memory_extraction import MemoryExtractor
+from app.application.ports.storage import StorageProvider
 from app.application.ports.workflows import WorkflowClient
 from app.infrastructure.config import Settings
 from app.infrastructure.db import Database
@@ -136,6 +137,12 @@ def get_document_ingest(request: Request) -> DocumentIngestService:
     return request.app.state.document_ingest  # type: ignore[no-any-return]
 
 
+def get_storage(request: Request) -> StorageProvider:
+    """The original-file store (ADR 0002), built once in the lifespan. Consumed by
+    the upload route to persist original bytes before ingest."""
+    return request.app.state.storage  # type: ignore[no-any-return]
+
+
 def get_app_settings(request: Request) -> Settings:
     """Read the Settings instance built in create_app / lifespan.
 
@@ -182,6 +189,7 @@ WorkflowUrlResolverDep = Annotated[Resolver, Depends(get_workflow_url_resolver)]
 DocumentParserDep = Annotated[DocumentParser, Depends(get_document_parser)]
 ChunkerDep = Annotated[Chunker, Depends(get_chunker)]
 DocumentIngestDep = Annotated[DocumentIngestService, Depends(get_document_ingest)]
+StorageDep = Annotated[StorageProvider, Depends(get_storage)]
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 

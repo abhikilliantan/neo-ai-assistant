@@ -68,6 +68,14 @@ class Document(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="ready")
     # Canonical extracted text — chunk char offsets index into THIS string.
     full_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # ADR 0002: original-file storage. The bytes live OUTSIDE the DB behind a
+    # StorageProvider; these carry the opaque pointer + provenance + integrity.
+    # All nullable — legacy rows predate storage and their originals are gone.
+    # `storage_backend`/`content_sha256` mirror the per-row provenance discipline
+    # of embedding_model / chunker on document_chunks.
+    storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    storage_backend: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     organization: Mapped[Organization] = relationship()
     uploaded_by: Mapped[User | None] = relationship()

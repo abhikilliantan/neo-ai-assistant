@@ -41,6 +41,10 @@ services:
         condition: service_healthy
     ports:
       - "8001:8000"
+    # ADR 0002: original uploaded files live on this volume so they survive
+    # container recreation. Path matches settings.document_storage_root.
+    volumes:
+      - documentstorage:/var/neo/documents
     networks: [neo]
 
   web:
@@ -77,3 +81,4 @@ volumes:
   pgdata:
   redisdata:
   n8ndata:
+  documentstorage:

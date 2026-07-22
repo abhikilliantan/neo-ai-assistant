@@ -30,6 +30,7 @@ from app.infrastructure.config import Settings, get_settings
 from app.infrastructure.db import build_database, build_system_database
 from app.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
 from app.infrastructure.logging import configure_logging, get_logger
+from app.infrastructure.storage import build_storage_provider
 from app.presentation.http.routers import (
     agents_router,
     auth_router,
@@ -68,6 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         chunker=chunker,
         embedding_provider=embedding_provider,
     )
+    # ADR 0002: original-file store. Bytes live outside the DB behind this port.
+    storage = build_storage_provider(settings)  # fail-fast if misconfigured
     checks: list[HealthCheck] = [
         DatabaseHealthCheck(name="postgres", db=database),
         RedisHealthCheck(name="redis", redis=redis),
@@ -89,6 +92,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.document_parser = document_parser
     app.state.chunker = chunker
     app.state.document_ingest = document_ingest
+    app.state.storage = storage
     app.state.health_checks = checks
     log.info(
         "startup",
