@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30
+    # R6: gate public self-registration. Route-level kill switch mirroring
+    # tools_enabled / documents_enabled. Default True so dev/CI (where ~30 tests
+    # bootstrap via POST /register) are unaffected. The admin-provisioned pilot
+    # sets REGISTRATION_ENABLED=false in .env; new users are then created only via
+    # `make create-user` (scripts/create_user.py), which bypasses this flag.
+    registration_enabled: bool = True
 
     # --- database ---
     # `database_url` — privileged role (neo, owner). Used by Alembic and the

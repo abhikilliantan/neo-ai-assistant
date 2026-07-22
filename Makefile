@@ -1,7 +1,7 @@
 # Neo AI Assistant — dev entrypoint
 # Thin wrapper over docker compose + workspace scripts.
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap up down logs ps clean api api-rebuild web fmt lint test precommit migrate migration shell-db
+.PHONY: help bootstrap up down logs ps clean api api-rebuild web fmt lint test precommit migrate migration shell-db create-user
 
 include .env
 export
@@ -57,6 +57,9 @@ test:  ## Run tests
 
 precommit:  ## Run pre-commit against all files
 	pre-commit run --all-files
+
+create-user:  ## Provision a pilot user+org+owner (usage: make create-user EMAIL=a@b.com PASSWORD=secret12 ORG="Acme")
+	docker compose exec api python -m scripts.create_user --email "$(EMAIL)" --password "$(PASSWORD)" --org "$(ORG)"
 
 migrate:  ## Apply alembic migrations inside the running api container
 	docker compose exec api alembic upgrade head

@@ -18,13 +18,14 @@ from app.infrastructure.db.repositories import (
     SystemRepository,
     UserRepository,
 )
-from app.presentation.http.deps import AppSessionDep, SystemSessionDep
+from app.presentation.http.deps import AppSessionDep, SettingsDep, SystemSessionDep
 from app.presentation.http.schemas.auth import (
     AuthResponse,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
 )
+from app.shared.exceptions.auth import RegistrationClosedError
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -57,8 +58,14 @@ def _to_response(result: auth_uc.AuthResult) -> AuthResponse:
 async def register(
     body: RegisterRequest,
     system_session: SystemSessionDep,
+    settings: SettingsDep,
     request: Request,
 ) -> AuthResponse:
+    # R6: gate public self-registration BEFORE any side effect (no user/org/session
+    # row, no token). The admin-provisioned pilot sets REGISTRATION_ENABLED=false;
+    # onboarding then happens only via `make create-user`.
+    if not settings.registration_enabled:
+        raise RegistrationClosedError("public registration is closed")
     # Register runs ENTIRELY on the system session so user creation and the
     # first sessions row live in one transaction. Using the app session for
     # sessions here would FK-violate — the app-session connection can't see

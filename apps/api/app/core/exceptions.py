@@ -13,7 +13,11 @@ from app.shared.exceptions.ai import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
-from app.shared.exceptions.auth import AuthenticationError, EmailAlreadyRegisteredError
+from app.shared.exceptions.auth import (
+    AuthenticationError,
+    EmailAlreadyRegisteredError,
+    RegistrationClosedError,
+)
 from app.shared.exceptions.common import BadRequestError, NotFoundError
 from app.shared.exceptions.documents import (
     DocumentParseError,
@@ -99,6 +103,15 @@ async def _email_taken_handler(_: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         _error_body("email_already_registered", "email is already registered"),
         status_code=status.HTTP_409_CONFLICT,
+    )
+
+
+async def _registration_closed_handler(_: Request, exc: Exception) -> JSONResponse:
+    # R6: standard envelope, NOT a raw {"detail": ...} 403. Fixed message — no
+    # user data. The pilot is admin-provisioned; direct users to their admin.
+    return JSONResponse(
+        _error_body("registration_closed", "registration is closed; contact your administrator"),
+        status_code=status.HTTP_403_FORBIDDEN,
     )
 
 
@@ -231,6 +244,7 @@ async def _embedding_api_handler(_: Request, exc: Exception) -> JSONResponse:
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_handler)
     app.add_exception_handler(EmailAlreadyRegisteredError, _email_taken_handler)
+    app.add_exception_handler(RegistrationClosedError, _registration_closed_handler)
     app.add_exception_handler(NotFoundError, _not_found_handler)
     app.add_exception_handler(BadRequestError, _bad_request_handler)
     # Document upload: register the SUBCLASSES (too-large, unsupported-type)

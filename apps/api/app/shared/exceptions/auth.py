@@ -17,3 +17,8 @@ class AuthenticationError(AuthError):
 
 class EmailAlreadyRegisteredError(AuthError):
     """Registration attempt with an email that already exists."""
+
+
+class RegistrationClosedError(AuthError):
+    """Public registration is gated off (R6). Raised by POST /register when
+    settings.registration_enabled is False; mapped to 403."""

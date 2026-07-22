@@ -60,6 +60,38 @@ async def test_register_creates_user_org_membership(
 
 
 @pytest.mark.asyncio
+async def test_register_403_when_registration_disabled(
+    db_app,  # type: ignore[no-untyped-def]
+    db_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    # R6: flag off → 403 with the standard envelope, and NO side effect (the check
+    # runs before any user/org/session row). Default stays True everywhere else, so
+    # the ~30 other tests that register are unaffected.
+    db_app.state.settings.registration_enabled = False
+    r = await db_client.post(
+        "/api/v1/auth/register",
+        json={"email": "closed@example.com", "password": "correct horse battery staple"},
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "registration_closed"
+    # Gate ran before any side effect — no user row was created.
+    users = (await db_session.execute(select(User))).scalars().all()
+    assert users == []
+
+
+@pytest.mark.asyncio
+async def test_register_201_when_registration_enabled_default(db_client: AsyncClient) -> None:
+    # Explicit proof the default (True) still accepts registration — the posture
+    # every existing /register test depends on.
+    r = await db_client.post(
+        "/api/v1/auth/register",
+        json={"email": "open@example.com", "password": "correct horse battery staple"},
+    )
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.asyncio
 async def test_register_duplicate_email_returns_409(db_client: AsyncClient) -> None:
     await _register(db_client)
     r = await db_client.post(
