@@ -25,6 +25,13 @@ class UnsupportedContentTypeError(DocumentParseError):
     """The parser does not handle this content type."""
 
 
+class DocumentParseTimeoutError(DocumentParseError):
+    """The parse exceeded its wall-clock budget and the isolation child was killed
+    (ADR 0003). A subclass of DocumentParseError so it maps to 422 like other
+    processing failures — a timed-out parse couldn't turn the file into a document.
+    """
+
+
 class DocumentDecodeError(DocumentParseError):
     """The bytes could not be decoded as text (8f-1: tried utf-8-sig then utf-8).
 

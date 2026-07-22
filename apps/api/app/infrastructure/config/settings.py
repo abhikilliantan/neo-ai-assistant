@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     document_max_bytes: int = 10_000_000  # 10 MB
     document_max_pages: int = 500
     document_parse_timeout_seconds: float = 30.0
+    # ADR 0003: memory cap (RLIMIT_AS) for the parse-isolation child. 1 GiB
+    # default (resolved Open Question 1) — tolerates a large-but-legitimate
+    # document's working set while hard-killing an unbounded allocation.
+    document_parse_max_memory_bytes: int = 1_073_741_824  # 1 GiB
     # ADR 0002 — original file storage. Bytes live OUTSIDE the DB behind a
     # StorageProvider; the documents row keeps only an opaque pointer. Slice 1
     # ships the single "filesystem" backend (S3/MinIO/Azure land later behind the
