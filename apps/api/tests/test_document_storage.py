@@ -23,12 +23,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.documents.chunker import FixedSizeChunker
+from app.ai.documents.docx import DOCX_CONTENT_TYPE
 from app.ai.documents.ingest import DocumentIngestService
 from app.ai.documents.mock import MockDocumentParser
 from app.application.ports.embeddings import EmbeddingResult, InputType
 from app.infrastructure.db.models import Document
 from app.infrastructure.storage import probe_storage_writable
 from app.infrastructure.storage.filesystem import LocalFilesystemStorage
+from app.shared.exceptions.documents import DocumentParseError
 from app.shared.exceptions.embeddings import EmbeddingProviderUnavailableError
 
 _PDF = "application/pdf"
@@ -280,3 +282,67 @@ async def test_probe_fails_fast_with_clear_message_on_unwritable_root() -> None:
     assert root in msg  # names the storage root
     assert "will not start" in msg  # refuses the boot
     assert "Permission denied" in msg  # surfaces the underlying OS error
+
+
+# --- ADR 0003: DOCX upload-path (hermetic, mock everywhere) -------------------
+
+
+def _minimal_docx() -> bytes:
+    """A real, valid .docx (PK zip) built via python-docx — passes the magic sniff."""
+    import io
+
+    from docx import Document as _Docx
+
+    d = _Docx()
+    d.add_paragraph("hello")
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_docx_magic_number_mismatch_rejected_without_storing(
+    db_app: FastAPI, db_client: AsyncClient
+) -> None:
+    reg = await _register(db_client, "alice@magic.example")
+    assert _stored_files(db_app) == []  # fresh store
+    # Declared DOCX but the bytes are not a ZIP (no PK\x03\x04) → rejected at the
+    # magic sniff, BEFORE the store.
+    r = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("fake.docx", b"this is plainly not a zip", DOCX_CONTENT_TYPE)},
+        headers=_auth(reg),
+    )
+    assert r.status_code == 415, r.text
+    assert r.json()["error"]["code"] == "unsupported_content_type"
+    assert _stored_files(db_app) == []  # magic gate is BEFORE the store → nothing written
+
+
+class _RaisingParser:
+    async def parse(self, *, data: bytes, content_type: str):  # type: ignore[no-untyped-def]
+        raise DocumentParseError("simulated DOCX parse failure")
+
+
+@pytest.mark.asyncio
+async def test_docx_parse_failure_leaves_no_row_and_no_orphan(
+    db_app: FastAPI, db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # A valid DOCX (passes the magic sniff, gets stored) whose parse then fails —
+    # the store's compensating delete must fire: no Document row AND no orphan.
+    db_app.state.document_ingest = DocumentIngestService(
+        parser=_RaisingParser(),
+        chunker=FixedSizeChunker(chunk_size=1000, overlap=200),
+        embedding_provider=_BoomEmbeddingProvider(),  # never reached — parse fails first
+        chunk_size=1000,
+        embedding_model="voyage-3.5",
+    )
+    reg = await _register(db_client, "alice@docxfail.example")
+    r = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("real.docx", _minimal_docx(), DOCX_CONTENT_TYPE)},
+        headers=_auth(reg),
+    )
+    assert r.status_code == 422, r.text  # parse failure surfaces as 422
+    doc_n = (await db_session.execute(select(func.count()).select_from(Document))).scalar_one()
+    assert doc_n == 0  # no row
+    assert _stored_files(db_app) == []  # compensating delete fired: no orphan

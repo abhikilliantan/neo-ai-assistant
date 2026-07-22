@@ -18,6 +18,7 @@ from __future__ import annotations
 from app.ai.documents.block_aware import BlockAwareChunker
 from app.ai.documents.chunker import FixedSizeChunker
 from app.ai.documents.dispatch import ContentTypeDocumentParser
+from app.ai.documents.docx import DOCX_CONTENT_TYPE, SubprocessDocxParser
 from app.ai.documents.ingest import (
     DocumentIngestService,
     validate_chunk_size_within_token_cap,
@@ -53,7 +54,19 @@ def build_document_parser(settings: Settings) -> DocumentParser:
         )
     else:
         raise RuntimeError(f"Unknown DOCUMENT_PARSER: {settings.document_parser!r}")
-    return ContentTypeDocumentParser(text_parser=text_parser, fallback=fallback)
+
+    # ADR 0003: real per-format parsers, enabled PER FORMAT via
+    # document_native_parsers (no single global flag turns both on). Each runs in
+    # the subprocess isolation harness. DOCX ships now; PDF is a later slice.
+    native: dict[str, DocumentParser] = {}
+    enabled = settings.document_native_parsers_set
+    if "docx" in enabled:
+        native[DOCX_CONTENT_TYPE] = SubprocessDocxParser(
+            max_decompressed_bytes=settings.document_docx_max_decompressed_bytes,
+            max_memory_bytes=settings.document_parse_max_memory_bytes,
+            timeout_seconds=settings.document_parse_timeout_seconds,
+        )
+    return ContentTypeDocumentParser(text_parser=text_parser, native=native, fallback=fallback)
 
 
 def build_chunker(settings: Settings) -> Chunker:

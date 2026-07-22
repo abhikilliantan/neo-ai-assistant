@@ -236,6 +236,28 @@ def test_build_document_parser_mock_fallback_is_opt_in() -> None:
     assert isinstance(parser._fallback, MockDocumentParser)
 
 
+def test_native_docx_parser_off_by_default() -> None:
+    # ADR 0003 per-format enablement: with document_native_parsers empty (default),
+    # NO native parser is wired — DOCX falls through to the fallback (mock in tests,
+    # reject in prod). The real subprocess parser is opt-in, never a silent default.
+    from app.ai.documents.docx import DOCX_CONTENT_TYPE
+
+    parser = build_document_parser(_base(document_parser="mock"))
+    assert isinstance(parser, ContentTypeDocumentParser)
+    assert DOCX_CONTENT_TYPE not in parser._native
+
+
+def test_native_docx_parser_opt_in_per_format() -> None:
+    # Listing "docx" wires the real SubprocessDocxParser for the DOCX type ONLY.
+    # PDF is NOT enabled (no single global flag) — it stays out of _native.
+    from app.ai.documents.docx import DOCX_CONTENT_TYPE, SubprocessDocxParser
+
+    parser = build_document_parser(_base(document_native_parsers="docx"))
+    assert isinstance(parser, ContentTypeDocumentParser)
+    assert isinstance(parser._native[DOCX_CONTENT_TYPE], SubprocessDocxParser)
+    assert "application/pdf" not in parser._native
+
+
 @pytest.mark.asyncio
 async def test_dispatcher_rejects_unsupported_type_with_415_error() -> None:
     from app.shared.exceptions.documents import UnsupportedContentTypeError

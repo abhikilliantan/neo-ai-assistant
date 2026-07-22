@@ -17,16 +17,19 @@ import sys
 from app.ai.parsing.protocol import ChildParseError
 
 
-def _registry() -> dict[str, object]:
-    reg: dict[str, object] = {}
-    # Real parsers (DOCX, PDF) register here as later slices land — none yet.
-    # Synthetic harness-exercisers are registered ONLY under the test flag, so
+def _get_parser(name: str) -> object | None:
+    # Real parsers, lazily imported so a synthetic run never loads python-docx/lxml.
+    if name == "docx":
+        from app.ai.parsing.docx_parser import parse_docx
+
+        return parse_docx
+    # Synthetic harness-exercisers, registered ONLY under the test flag so
     # production never exposes them.
     if os.environ.get("NEO_PARSER_SYNTHETIC") == "1":
         from app.ai.parsing._synthetic import SYNTHETIC
 
-        reg.update(SYNTHETIC)
-    return reg
+        return SYNTHETIC.get(name)
+    return None
 
 
 def _emit(obj: dict[str, object]) -> None:
@@ -37,7 +40,7 @@ def _emit(obj: dict[str, object]) -> None:
 def main() -> int:
     name = sys.argv[1] if len(sys.argv) > 1 else ""
     data = sys.stdin.buffer.read()
-    parser = _registry().get(name)
+    parser = _get_parser(name)
     if parser is None:
         _emit({"error_class": "unsupported", "message": f"no parser named {name!r}"})
         return 0

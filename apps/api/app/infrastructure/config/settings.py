@@ -153,6 +153,15 @@ class Settings(BaseSettings):
     # default (resolved Open Question 1) — tolerates a large-but-legitimate
     # document's working set while hard-killing an unbounded allocation.
     document_parse_max_memory_bytes: int = 1_073_741_824  # 1 GiB
+    # ADR 0003: DOCX decompressed-size cap (zip-bomb defense). 200 MiB default
+    # (resolved OQ2) — 20x the 10 MB upload cap; generous for real files, lethal
+    # to bombs.
+    document_docx_max_decompressed_bytes: int = 209_715_200  # 200 MiB
+    # ADR 0003: PER-FORMAT enablement of real (native) parsers — comma-separated
+    # format keys ("docx", "pdf"). Empty default → no native parser; unlisted
+    # formats fall to the fallback (mock in tests, reject in prod). Enabling
+    # "docx" does NOT enable "pdf". mock/reject stay the CI/test/prod defaults.
+    document_native_parsers: str = ""
     # ADR 0002 — original file storage. Bytes live OUTSIDE the DB behind a
     # StorageProvider; the documents row keeps only an opaque pointer. Slice 1
     # ships the single "filesystem" backend (S3/MinIO/Azure land later behind the
@@ -193,6 +202,12 @@ class Settings(BaseSettings):
     def document_allowed_content_types_set(self) -> frozenset[str]:
         return frozenset(
             t.strip().lower() for t in self.document_allowed_content_types.split(",") if t.strip()
+        )
+
+    @property
+    def document_native_parsers_set(self) -> frozenset[str]:
+        return frozenset(
+            t.strip().lower() for t in self.document_native_parsers.split(",") if t.strip()
         )
 
     @property

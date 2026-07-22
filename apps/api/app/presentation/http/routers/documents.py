@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Request, status
 from fastapi.responses import Response
 
+from app.ai.documents.docx import DOCX_CONTENT_TYPE
 from app.application.ports.documents import DocumentPosition
 from app.application.ports.storage import StorageProvider
 from app.infrastructure.db.models import Document, DocumentChunk
@@ -47,6 +48,11 @@ from app.shared.exceptions.common import NotFoundError
 from app.shared.exceptions.documents import DocumentParseError, UnsupportedContentTypeError
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
+
+# ADR 0003 magic-number signatures — content types whose real parser we protect by
+# requiring the bytes to match. DOCX is a ZIP ("PK\x03\x04"). PDF ("%PDF-") lands
+# with the PDF parser in a later slice.
+_MAGIC_SIGNATURES: dict[str, bytes] = {DOCX_CONTENT_TYPE: b"PK\x03\x04"}
 
 
 @router.post("/documents", response_model=DocumentOut)
@@ -82,6 +88,13 @@ async def upload_document(
     declared_type = upload.content_type.split(";")[0].strip().lower()
     if declared_type not in settings.document_allowed_content_types_set:
         raise UnsupportedContentTypeError("unsupported document content type")
+
+    # (a2) Magic-number sniff (ADR 0003) — after the declared-type gate, BEFORE the
+    # store: a file whose bytes don't match its declared type is rejected here, so a
+    # mislabeled file never reaches the store or the parser. DOCX must be a ZIP.
+    signature = _MAGIC_SIGNATURES.get(declared_type)
+    if signature is not None and not upload.data.startswith(signature):
+        raise UnsupportedContentTypeError("file content does not match its declared type")
 
     # (b) Store the original bytes. The key is org-scoped + server-minted (an
     # opaque UUID the client never sees), so tenancy is enforced above the dumb

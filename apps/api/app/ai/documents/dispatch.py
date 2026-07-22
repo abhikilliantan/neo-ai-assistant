@@ -23,14 +23,26 @@ _TEXT_CONTENT_TYPES = frozenset({"text/plain", "text/markdown"})
 
 
 class ContentTypeDocumentParser:
-    def __init__(self, *, text_parser: DocumentParser, fallback: DocumentParser | None) -> None:
+    def __init__(
+        self,
+        *,
+        text_parser: DocumentParser,
+        fallback: DocumentParser | None,
+        native: dict[str, DocumentParser] | None = None,
+    ) -> None:
         self._text_parser = text_parser
+        # `native` maps content-type → a real per-format parser (e.g. DOCX), enabled
+        # per-format (ADR 0003). A type with no native parser falls to `fallback`.
+        self._native = native or {}
         self._fallback = fallback
 
     async def parse(self, *, data: bytes, content_type: str) -> ParsedDocument:
         base = content_type.split(";")[0].strip().lower()
         if base in _TEXT_CONTENT_TYPES:
             return await self._text_parser.parse(data=data, content_type=content_type)
+        native = self._native.get(base)
+        if native is not None:
+            return await native.parse(data=data, content_type=content_type)
         if self._fallback is None:
             raise UnsupportedContentTypeError(
                 f"cannot process {base!r} yet — only plain text (text/plain) and "
