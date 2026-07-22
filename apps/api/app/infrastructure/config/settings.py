@@ -157,6 +157,13 @@ class Settings(BaseSettings):
     # (resolved OQ2) — 20x the 10 MB upload cap; generous for real files, lethal
     # to bombs.
     document_docx_max_decompressed_bytes: int = 209_715_200  # 200 MiB
+    # ADR 0003: PDF scanned/image-only floor (resolved OQ3). If a PDF's average
+    # extractable chars-per-page is below this, it is rejected with 422 + a clear
+    # "OCR isn't supported" message rather than silently ingested as empty — a PDF
+    # with no text layer is almost always a scan. Measured margin is wide: scanned
+    # pages extract 0 chars, real text pages hundreds+, so 10 separates comfortably
+    # without rejecting sparse-but-real text. Ops-tunable per corpus.
+    document_pdf_min_chars_per_page: int = 10
     # ADR 0003: PER-FORMAT enablement of real (native) parsers — comma-separated
     # format keys ("docx", "pdf"). Empty default → no native parser; unlisted
     # formats fall to the fallback (mock in tests, reject in prod). Enabling

@@ -23,6 +23,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import Response
 
 from app.ai.documents.docx import DOCX_CONTENT_TYPE
+from app.ai.documents.pdf import PDF_CONTENT_TYPE
 from app.application.ports.documents import DocumentPosition
 from app.application.ports.storage import StorageProvider
 from app.infrastructure.db.models import Document, DocumentChunk
@@ -50,9 +51,11 @@ from app.shared.exceptions.documents import DocumentParseError, UnsupportedConte
 router = APIRouter(prefix="/api/v1", tags=["documents"])
 
 # ADR 0003 magic-number signatures — content types whose real parser we protect by
-# requiring the bytes to match. DOCX is a ZIP ("PK\x03\x04"). PDF ("%PDF-") lands
-# with the PDF parser in a later slice.
-_MAGIC_SIGNATURES: dict[str, bytes] = {DOCX_CONTENT_TYPE: b"PK\x03\x04"}
+# requiring the bytes to match. DOCX is a ZIP ("PK\x03\x04"); PDF starts "%PDF-".
+_MAGIC_SIGNATURES: dict[str, bytes] = {
+    DOCX_CONTENT_TYPE: b"PK\x03\x04",
+    PDF_CONTENT_TYPE: b"%PDF-",
+}
 
 
 @router.post("/documents", response_model=DocumentOut)

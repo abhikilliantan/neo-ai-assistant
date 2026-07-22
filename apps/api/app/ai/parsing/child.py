@@ -23,6 +23,10 @@ def _get_parser(name: str) -> object | None:
         from app.ai.parsing.docx_parser import parse_docx
 
         return parse_docx
+    if name == "pdf":
+        from app.ai.parsing.pdf_parser import parse_pdf
+
+        return parse_pdf
     # Synthetic harness-exercisers, registered ONLY under the test flag so
     # production never exposes them.
     if os.environ.get("NEO_PARSER_SYNTHETIC") == "1":

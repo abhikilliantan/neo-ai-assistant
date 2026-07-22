@@ -38,6 +38,10 @@ def _base(**overrides: object) -> Settings:
         "app_database_url": "postgresql+asyncpg://x/x",
         "redis_url": "redis://x",
         "jwt_secret_key": "test-secret-key-at-least-32-bytes-long-xxxxx",
+        # Hermetic default: ignore any DOCUMENT_NATIVE_PARSERS in the dev's .env so
+        # per-format enablement tests assert against a known-empty baseline. Opt-in
+        # tests override this explicitly.
+        "document_native_parsers": "",
     }
     kwargs.update(overrides)
     return Settings(**kwargs)  # type: ignore[arg-type]
@@ -256,6 +260,28 @@ def test_native_docx_parser_opt_in_per_format() -> None:
     assert isinstance(parser, ContentTypeDocumentParser)
     assert isinstance(parser._native[DOCX_CONTENT_TYPE], SubprocessDocxParser)
     assert "application/pdf" not in parser._native
+
+
+def test_native_pdf_parser_off_by_default() -> None:
+    # Default (empty document_native_parsers): no native PDF parser — PDF falls to
+    # the fallback (mock in tests, reject in prod), never a silent real parse.
+    from app.ai.documents.pdf import PDF_CONTENT_TYPE
+
+    parser = build_document_parser(_base(document_parser="mock"))
+    assert isinstance(parser, ContentTypeDocumentParser)
+    assert PDF_CONTENT_TYPE not in parser._native
+
+
+def test_native_pdf_parser_opt_in_does_not_disturb_other_formats() -> None:
+    # Listing "pdf" wires the real SubprocessPdfParser for the PDF type ONLY —
+    # enabling PDF must not enable DOCX (per-format, no global flag).
+    from app.ai.documents.docx import DOCX_CONTENT_TYPE
+    from app.ai.documents.pdf import PDF_CONTENT_TYPE, SubprocessPdfParser
+
+    parser = build_document_parser(_base(document_native_parsers="pdf"))
+    assert isinstance(parser, ContentTypeDocumentParser)
+    assert isinstance(parser._native[PDF_CONTENT_TYPE], SubprocessPdfParser)
+    assert DOCX_CONTENT_TYPE not in parser._native
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ from app.ai.documents.chunker import FixedSizeChunker
 from app.ai.documents.docx import DOCX_CONTENT_TYPE
 from app.ai.documents.ingest import DocumentIngestService
 from app.ai.documents.mock import MockDocumentParser
+from app.ai.documents.pdf import PDF_CONTENT_TYPE
 from app.application.ports.embeddings import EmbeddingResult, InputType
 from app.infrastructure.db.models import Document
 from app.infrastructure.storage import probe_storage_writable
@@ -97,7 +98,7 @@ async def test_storage_provenance_and_hash_persisted(
 ) -> None:
     reg = await _register(db_client, "alice@prov.example")
     tenant = UUID(reg["active_tenant_id"])
-    payload = b"hello original document bytes"
+    payload = b"%PDF-1.4 hello original document bytes"  # %PDF- passes the magic sniff
 
     r = await db_client.post(
         "/api/v1/documents",
@@ -165,7 +166,7 @@ async def test_ingest_failure_after_store_leaves_no_row_and_no_orphan(
     reg = await _register(db_client, "alice@boom.example")
     r = await db_client.post(
         "/api/v1/documents",
-        files={"file": ("p.pdf", b"anything", _PDF)},
+        files={"file": ("p.pdf", b"%PDF-1.4 anything", _PDF)},
         headers=_auth(reg),
     )
     assert r.status_code >= 500  # provider failure surfaces as 5xx
@@ -205,7 +206,7 @@ async def test_store_write_failure_leaves_no_row(
     with pytest.raises(RuntimeError, match="store boom"):
         await db_client.post(
             "/api/v1/documents",
-            files={"file": ("p.pdf", b"anything", _PDF)},
+            files={"file": ("p.pdf", b"%PDF-1.4 anything", _PDF)},
             headers=_auth(reg),
         )
     doc_n = (await db_session.execute(select(func.count()).select_from(Document))).scalar_one()
@@ -223,7 +224,7 @@ async def test_cross_tenant_cannot_obtain_another_tenants_storage_key(
     a_tenant = UUID(alice["active_tenant_id"])
     up = await db_client.post(
         "/api/v1/documents",
-        files={"file": ("secret.pdf", b"alice secret bytes", _PDF)},
+        files={"file": ("secret.pdf", b"%PDF-1.4 alice secret bytes", _PDF)},
         headers=_auth(alice),
     )
     assert up.status_code == 200
@@ -240,7 +241,8 @@ async def test_cross_tenant_cannot_obtain_another_tenants_storage_key(
     # Proof it's isolation, not absence: Alice CAN reach it, and the bytes exist.
     alice_doc = await _load_doc(app_session_factory, a_tenant, doc_id)
     assert alice_doc is not None and alice_doc.storage_key is not None
-    assert await db_app.state.storage.get(key=alice_doc.storage_key) == b"alice secret bytes"
+    stored = await db_app.state.storage.get(key=alice_doc.storage_key)
+    assert stored == b"%PDF-1.4 alice secret bytes"
 
 
 # --- startup writability probe (ADR 0002 slice 1 hardening) -------------------
@@ -320,7 +322,7 @@ async def test_docx_magic_number_mismatch_rejected_without_storing(
 
 class _RaisingParser:
     async def parse(self, *, data: bytes, content_type: str):  # type: ignore[no-untyped-def]
-        raise DocumentParseError("simulated DOCX parse failure")
+        raise DocumentParseError("simulated parse failure")
 
 
 @pytest.mark.asyncio
@@ -340,6 +342,50 @@ async def test_docx_parse_failure_leaves_no_row_and_no_orphan(
     r = await db_client.post(
         "/api/v1/documents",
         files={"file": ("real.docx", _minimal_docx(), DOCX_CONTENT_TYPE)},
+        headers=_auth(reg),
+    )
+    assert r.status_code == 422, r.text  # parse failure surfaces as 422
+    doc_n = (await db_session.execute(select(func.count()).select_from(Document))).scalar_one()
+    assert doc_n == 0  # no row
+    assert _stored_files(db_app) == []  # compensating delete fired: no orphan
+
+
+@pytest.mark.asyncio
+async def test_pdf_magic_number_mismatch_rejected_without_storing(
+    db_app: FastAPI, db_client: AsyncClient
+) -> None:
+    reg = await _register(db_client, "alice@pdfmagic.example")
+    assert _stored_files(db_app) == []  # fresh store
+    # Declared PDF but the bytes don't start with %PDF- → rejected at the magic
+    # sniff, BEFORE the store.
+    r = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("fake.pdf", b"not a pdf at all", PDF_CONTENT_TYPE)},
+        headers=_auth(reg),
+    )
+    assert r.status_code == 415, r.text
+    assert r.json()["error"]["code"] == "unsupported_content_type"
+    assert _stored_files(db_app) == []  # magic gate is BEFORE the store → nothing written
+
+
+@pytest.mark.asyncio
+async def test_pdf_parse_failure_leaves_no_row_and_no_orphan(
+    db_app: FastAPI, db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # A file that passes the %PDF- magic sniff (so it gets stored) whose parse then
+    # fails → the compensating delete must fire: no Document row AND no orphan.
+    db_app.state.document_ingest = DocumentIngestService(
+        parser=_RaisingParser(),
+        chunker=FixedSizeChunker(chunk_size=1000, overlap=200),
+        embedding_provider=_BoomEmbeddingProvider(),  # never reached — parse fails first
+        chunk_size=1000,
+        embedding_model="voyage-3.5",
+    )
+    reg = await _register(db_client, "alice@pdffail.example")
+    pdf_bytes = b"%PDF-1.4 looks like a pdf but the parser rejects it"
+    r = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("real.pdf", pdf_bytes, PDF_CONTENT_TYPE)},
         headers=_auth(reg),
     )
     assert r.status_code == 422, r.text  # parse failure surfaces as 422

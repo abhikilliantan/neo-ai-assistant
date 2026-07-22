@@ -24,6 +24,7 @@ from app.ai.documents.ingest import (
     validate_chunk_size_within_token_cap,
 )
 from app.ai.documents.mock import MockDocumentParser
+from app.ai.documents.pdf import PDF_CONTENT_TYPE, SubprocessPdfParser
 from app.ai.documents.text import TextDocumentParser
 from app.application.ports.documents import Chunker, DocumentParser
 from app.application.ports.embeddings import EmbeddingProvider
@@ -56,13 +57,19 @@ def build_document_parser(settings: Settings) -> DocumentParser:
         raise RuntimeError(f"Unknown DOCUMENT_PARSER: {settings.document_parser!r}")
 
     # ADR 0003: real per-format parsers, enabled PER FORMAT via
-    # document_native_parsers (no single global flag turns both on). Each runs in
-    # the subprocess isolation harness. DOCX ships now; PDF is a later slice.
+    # document_native_parsers (no single global flag turns them on). Each runs in
+    # the subprocess isolation harness. Enabling one format never touches another.
     native: dict[str, DocumentParser] = {}
     enabled = settings.document_native_parsers_set
     if "docx" in enabled:
         native[DOCX_CONTENT_TYPE] = SubprocessDocxParser(
             max_decompressed_bytes=settings.document_docx_max_decompressed_bytes,
+            max_memory_bytes=settings.document_parse_max_memory_bytes,
+            timeout_seconds=settings.document_parse_timeout_seconds,
+        )
+    if "pdf" in enabled:
+        native[PDF_CONTENT_TYPE] = SubprocessPdfParser(
+            min_chars_per_page=settings.document_pdf_min_chars_per_page,
             max_memory_bytes=settings.document_parse_max_memory_bytes,
             timeout_seconds=settings.document_parse_timeout_seconds,
         )

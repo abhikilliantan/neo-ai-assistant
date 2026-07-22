@@ -121,14 +121,14 @@ async def test_upload_persists_document_and_chunks_and_appears_in_list(
     reg = await _register(db_client, "alice@docs8c.example")
     r = await db_client.post(
         "/api/v1/documents",
-        files={"file": ("paper.pdf", b"anything at all", _PDF)},
+        files={"file": ("paper.pdf", b"%PDF-1.4 anything at all", _PDF)},
         headers=_auth(reg),
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["filename"] == "paper.pdf"
     assert body["content_type"] == _PDF
-    assert body["byte_size"] == len(b"anything at all")
+    assert body["byte_size"] == len(b"%PDF-1.4 anything at all")
     assert body["status"] == "ready"
     assert body["chunk_count"] >= 1
     assert "full_text" not in body  # whitelist discipline — never leaks
@@ -155,7 +155,7 @@ async def test_traversal_filename_is_basenamed_in_the_stored_document(
     reg = await _register(db_client, "alice@fname8c.example")
     r = await db_client.post(
         "/api/v1/documents",
-        files={"file": ("../../etc/passwd", b"data", _PDF)},
+        files={"file": ("../../etc/passwd", b"%PDF-1.4 data", _PDF)},
         headers=_auth(reg),
     )
     assert r.status_code == 200, r.text
@@ -257,7 +257,7 @@ async def test_ingest_failure_leaves_zero_documents_and_chunks(
     reg = await _register(db_client, "alice@boom8c.example")
     r = await db_client.post(
         "/api/v1/documents",
-        files={"file": ("paper.pdf", b"anything", _PDF)},
+        files={"file": ("paper.pdf", b"%PDF-1.4 anything", _PDF)},
         headers=_auth(reg),
     )
     assert r.status_code >= 500  # provider/ingest failure surfaces as 5xx
@@ -280,7 +280,7 @@ async def test_cross_tenant_cannot_list_or_delete(db_client: AsyncClient) -> Non
 
     up = await db_client.post(
         "/api/v1/documents",
-        files={"file": ("alice.pdf", b"secret", _PDF)},
+        files={"file": ("alice.pdf", b"%PDF-1.4 secret", _PDF)},
         headers=_auth(alice),
     )
     assert up.status_code == 200
@@ -324,7 +324,7 @@ async def test_soft_delete_excludes_from_list_and_search(
     tenant_id = UUID(reg["active_tenant_id"])
     up = await db_client.post(
         "/api/v1/documents",
-        files={"file": ("paper.pdf", b"anything", _PDF)},
+        files={"file": ("paper.pdf", b"%PDF-1.4 anything", _PDF)},
         headers=_auth(reg),
     )
     assert up.status_code == 200

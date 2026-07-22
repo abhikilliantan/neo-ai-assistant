@@ -262,6 +262,11 @@ async def db_app(
         # which 415s pdf/docx). Pinned like the other mock providers above so
         # endpoint PDF uploads stay deterministic regardless of env leakage.
         document_parser="mock",
+        # Force native (real subprocess) parsers OFF regardless of the dev's .env
+        # (which may set DOCUMENT_NATIVE_PARSERS=docx to serve the running
+        # container). Tests must route pdf/docx to the mock fallback — the real
+        # subprocess parser is Linux-only and would break the macOS host suite.
+        document_native_parsers="",
     )
     app = create_app(settings)
     system_sm = async_sessionmaker(db_engine, expire_on_commit=False)
