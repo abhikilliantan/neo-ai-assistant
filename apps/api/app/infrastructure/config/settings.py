@@ -75,10 +75,13 @@ class Settings(BaseSettings):
 
     # --- embeddings ---
     # Locked at 1024 to match the pgvector schema 5b creates for voyage-3.5.
-    embedding_provider: Literal["mock", "voyage"] = "mock"
+    embedding_provider: Literal["mock", "voyage", "ollama"] = "mock"
     voyage_api_key: str = ""  # empty default; real value goes in .env
     embedding_model: str = "voyage-3.5"
     embedding_dimensions: int = 1024
+    # The API runs in Docker, Ollama on the host: inside the container reach it
+    # via host.docker.internal, not localhost.
+    ollama_base_url: str = "http://host.docker.internal:11434"
 
     # --- memory extraction (phase 5c) ---
     # `llm` reuses the chat provider — no new API key. `mock` is the CI/test

@@ -170,6 +170,27 @@ class ConversationRepository:
         c.last_message_at = datetime.now(UTC)
         await self.session.flush()
 
+    async def soft_delete(self, conversation_id: UUID) -> None:
+        """Idempotent soft-delete. Ownership is enforced at the endpoint layer
+        (fetch → check user_id) exactly like MemoryRepository.soft_delete — this
+        takes only an id, so RLS alone would let a same-tenant user delete
+        another's thread; the caller MUST verify ownership first."""
+        c = await self.session.get(Conversation, conversation_id)
+        if c is None or c.deleted_at is not None:
+            return
+        c.deleted_at = datetime.now(UTC)
+        await self.session.flush()
+
+    async def rename(self, conversation_id: UUID, *, title: str) -> Conversation | None:
+        """Set the thread title. Same ownership caveat as soft_delete — the
+        endpoint checks user_id first. Returns the updated row (None if gone)."""
+        c = await self.session.get(Conversation, conversation_id)
+        if c is None:
+            return None
+        c.title = title
+        await self.session.flush()
+        return c
+
 
 class MessageRepository:
     """Tenant-scoped append-only log. Callers must pass organization_id

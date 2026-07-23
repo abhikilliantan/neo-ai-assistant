@@ -186,6 +186,10 @@ export function ChatView() {
         activeConversationId={activeConversationId}
         onNewChat={startNewChat}
         onSelect={(id) => void loadConversation(id)}
+        onDeleted={(id) => {
+          // Deleting the active thread clears the view back to the empty state.
+          if (id === activeConversationId) startNewChat();
+        }}
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-4">

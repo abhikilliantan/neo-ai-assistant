@@ -54,6 +54,20 @@ class ConversationSummary(BaseModel):
     created_at: datetime
 
 
+class ConversationRenameRequest(BaseModel):
+    # Trimmed, bounded to the column width (String(255)). A blank title is not a
+    # rename — min_length=1 after the validator strips whitespace.
+    title: str = Field(min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("title must not be blank")
+        return stripped
+
+
 class ConversationMessageOut(BaseModel):
     id: UUID
     role: str

@@ -6,6 +6,7 @@ import pytest
 
 from app.ai.providers.embeddings import (
     MockEmbeddingProvider,
+    OllamaEmbeddingProvider,
     VoyageEmbeddingProvider,
     build_embedding_provider,
 )
@@ -45,6 +46,12 @@ def test_build_voyage_with_key_returns_voyage_provider() -> None:
 def test_build_voyage_without_key_raises_at_startup() -> None:
     with pytest.raises(RuntimeError, match="VOYAGE_API_KEY"):
         build_embedding_provider(_base(embedding_provider="voyage", voyage_api_key=""))
+
+
+def test_build_ollama_returns_ollama_provider_without_key() -> None:
+    provider = build_embedding_provider(_base(embedding_provider="ollama"))
+    assert isinstance(provider, OllamaEmbeddingProvider)
+    assert provider.dimension == 1024
 
 
 def test_build_pinned_on_app_state_via_db_app_fixture(db_app) -> None:  # type: ignore[no-untyped-def]
