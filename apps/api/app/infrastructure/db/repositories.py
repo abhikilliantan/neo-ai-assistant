@@ -340,6 +340,7 @@ class DocumentRepository:
         byte_size: int,
         full_text: str,
         status: str = "ready",
+        extraction_method: str = "text",
         storage_key: str | None = None,
         storage_backend: str | None = None,
         content_sha256: str | None = None,
@@ -352,6 +353,7 @@ class DocumentRepository:
             byte_size=byte_size,
             full_text=full_text,
             status=status,
+            extraction_method=extraction_method,
             storage_key=storage_key,
             storage_backend=storage_backend,
             content_sha256=content_sha256,
@@ -389,6 +391,7 @@ class DocumentRepository:
                 page_start=chunk.position.page_start,
                 page_end=chunk.position.page_end,
                 section=chunk.position.section,
+                ocr_confidence=chunk.ocr_confidence,
             )
             self.session.add(row)
             rows.append(row)

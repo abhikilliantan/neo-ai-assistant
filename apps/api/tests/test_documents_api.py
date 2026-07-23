@@ -417,3 +417,67 @@ async def test_set_tenant_guc_nil_sentinel_returns_zero_rows_not_error(
         rows = (await s.execute(select(Document))).scalars().all()
         assert rows == []  # nil matches no org → 0 rows, and crucially NO error
         await s.rollback()
+
+
+# --- ADR 0004: OCR provenance persists through ingest + surfaces in citations --
+
+
+class _StubOcrParser:
+    """Returns an OCR-derived ParsedDocument (no tesseract needed) so the ingest→
+    DB→citation provenance path is testable hermetically."""
+
+    async def parse(self, *, data: bytes, content_type: str):  # type: ignore[no-untyped-def]
+        from app.application.ports.documents import ParsedBlock, ParsedDocument
+
+        return ParsedDocument(
+            content_type=content_type,
+            extraction_method="ocr",
+            blocks=[
+                ParsedBlock(text="annual leave 26 days\n", page=1, section=None, confidence=88.0),
+                ParsedBlock(text="bereavement five days\n", page=2, section=None, confidence=72.0),
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_ocr_document_persists_extraction_method_and_confidence_and_cites_ocr(
+    db_app: FastAPI, db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    from app.ai.documents.block_aware import BlockAwareChunker
+
+    db_app.state.document_ingest = DocumentIngestService(
+        parser=_StubOcrParser(),
+        chunker=BlockAwareChunker(chunk_size=1000, overlap=0),
+        embedding_provider=MockEmbeddingProvider(),
+        chunk_size=1000,
+        embedding_model="mock-embed-1",
+    )
+    reg = await _register(db_client, "alice@ocr8.example")
+    up = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("scan.pdf", b"%PDF-1.4 scanned bytes", _PDF)},
+        headers=_auth(reg),
+    )
+    assert up.status_code == 200, up.text
+
+    # Document row carries extraction_method="ocr".
+    doc = (await db_session.execute(select(Document))).scalars().one()
+    assert doc.extraction_method == "ocr"
+
+    # Every chunk row carries a non-NULL ocr_confidence (mean of packed blocks).
+    chunks = (await db_session.execute(select(DocumentChunk))).scalars().all()
+    assert chunks and all(c.ocr_confidence is not None for c in chunks)
+
+    # Citation renders "(OCR)". Drop the floor so the mock-embedded chunk is
+    # returned deterministically regardless of mock similarity.
+    db_app.state.settings.document_search_min_similarity = -1.0
+    r = await db_client.post(
+        "/api/v1/documents/search",
+        json={"query": "annual leave", "limit": 5},
+        headers=_auth(reg),
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()
+    assert results, "expected at least one hit with the floor dropped"
+    assert all(hit["citation"].endswith("(OCR)") for hit in results)
+    assert all(hit["position"]["is_ocr"] is True for hit in results)

@@ -44,6 +44,13 @@ class FixedSizeChunker:
         if not full:
             return []
 
+        # ADR 0004: the fixed window ignores block boundaries, so per-chunk OCR
+        # confidence is approximated by the document-level mean (fixed is the
+        # legacy chunker; block_aware is the default and computes per-chunk).
+        is_ocr = document.extraction_method == "ocr"
+        _confs = [b.confidence for b in document.blocks if b.confidence is not None]
+        doc_confidence = sum(_confs) / len(_confs) if _confs else None
+
         # Precompute each block's END offset in the global text, so a global
         # char offset maps back to its block (page/section) in O(log n).
         block_ends: list[int] = []
@@ -73,6 +80,7 @@ class FixedSizeChunker:
                     document_id=document_id,
                     ordinal=ordinal,
                     text=full[start:end],
+                    ocr_confidence=doc_confidence,
                     position=DocumentPosition(
                         char_start=start,
                         char_end=end,
@@ -80,6 +88,7 @@ class FixedSizeChunker:
                         page_end=last.page,
                         # Section is a best-effort hint → take the first block's.
                         section=first.section,
+                        is_ocr=is_ocr,
                     ),
                 )
             )

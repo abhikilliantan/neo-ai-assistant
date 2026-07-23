@@ -132,6 +132,8 @@ class SearchDocumentsTool:
             page_start=chunk.page_start,
             page_end=chunk.page_end,
             section=chunk.section,
+            # ADR 0004: OCR-derived docs render "(OCR)" in the citation.
+            is_ocr=chunk.document.extraction_method == "ocr",
         )
         excerpt = " ".join(chunk.text.split())
         return (

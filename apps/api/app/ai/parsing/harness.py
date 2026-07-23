@@ -149,7 +149,15 @@ def _build_document(out: bytes, content_type: str) -> ParsedDocument:
     if not isinstance(blocks_raw, list):
         raise DocumentParseError("document parser returned no blocks")
     blocks = [
-        ParsedBlock(text=str(b["text"]), page=b.get("page"), section=b.get("section"))
+        ParsedBlock(
+            text=str(b["text"]),
+            page=b.get("page"),
+            section=b.get("section"),
+            confidence=b.get("confidence"),
+        )
         for b in blocks_raw
     ]
-    return ParsedDocument(content_type=content_type, blocks=blocks)
+    extraction_method = str(payload.get("extraction_method") or "text")
+    return ParsedDocument(
+        content_type=content_type, blocks=blocks, extraction_method=extraction_method
+    )

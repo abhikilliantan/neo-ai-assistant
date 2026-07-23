@@ -22,6 +22,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
+# ADR 0004 slice 1: local OCR for scanned PDFs. Tesseract is the ONLY system
+# binary in the parse child — added deliberately to keep OCR local (no cloud
+# egress). `-eng` is the English language pack pytesseract shells out to.
+# pypdfium2 (the rasterizer) needs no system package — its wheel bundles PDFium.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --uid 1000 neo
 # ADR 0002: original-file storage root, owned by neo so a fresh named volume
 # mounted here inherits neo ownership — a root-owned mountpoint would deny the

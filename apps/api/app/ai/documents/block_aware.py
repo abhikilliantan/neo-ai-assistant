@@ -38,10 +38,18 @@ from __future__ import annotations
 from app.application.ports.documents import (
     DocumentChunk,
     DocumentPosition,
+    ParsedBlock,
     ParsedDocument,
 )
 
 _CHUNKER_ID = "block-aware-1"  # name+version, mirrors embedding_model (ADR 0001 OQ3)
+
+
+def _mean_confidence(blocks: list[ParsedBlock]) -> float | None:
+    """Mean OCR confidence over the blocks that carry one; None if none do (a
+    natively-extracted document). ADR 0004."""
+    confidences = [b.confidence for b in blocks if b.confidence is not None]
+    return sum(confidences) / len(confidences) if confidences else None
 
 
 class BlockAwareChunker:
@@ -114,6 +122,10 @@ class BlockAwareChunker:
             i = j
 
         # --- Phase 2: emit chunks with overlap carry + provenance ---
+        # ADR 0004: is_ocr is document-level; ocr_confidence is the mean over the
+        # blocks a chunk packs (None for natively-extracted docs, whose blocks
+        # carry no confidence).
+        is_ocr = document.extraction_method == "ocr"
         chunks: list[DocumentChunk] = []
         ordinal = 0
         prev_pack: list[int] | None = None  # trailing blocks eligible to carry
@@ -123,6 +135,7 @@ class BlockAwareChunker:
                 idx = payload[0]
                 start = bstart(idx)
                 end = bend(idx)
+                conf = _mean_confidence([blocks[idx]])
                 s = start
                 while s < end:
                     e = min(s + self._chunk_size, end)
@@ -136,6 +149,8 @@ class BlockAwareChunker:
                             section=blocks[idx].section,
                             page_start=blocks[idx].page,
                             page_end=blocks[idx].page,
+                            is_ocr=is_ocr,
+                            ocr_confidence=conf,
                         )
                     )
                     ordinal += 1
@@ -170,6 +185,8 @@ class BlockAwareChunker:
                     section=section,
                     page_start=blocks[all_idx[0]].page,
                     page_end=blocks[all_idx[-1]].page,
+                    is_ocr=is_ocr,
+                    ocr_confidence=_mean_confidence([blocks[k] for k in all_idx]),
                 )
             )
             ordinal += 1
@@ -187,16 +204,20 @@ class BlockAwareChunker:
         section: str | None,
         page_start: int | None,
         page_end: int | None,
+        is_ocr: bool,
+        ocr_confidence: float | None,
     ) -> DocumentChunk:
         return DocumentChunk(
             document_id=document_id,
             ordinal=ordinal,
             text=full[start:end],
+            ocr_confidence=ocr_confidence,
             position=DocumentPosition(
                 char_start=start,
                 char_end=end,
                 page_start=page_start,
                 page_end=page_end,
                 section=section,
+                is_ocr=is_ocr,
             ),
         )

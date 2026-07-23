@@ -21,11 +21,12 @@ a partial extraction presented as complete):
    any /Encrypt-carrying trailer. 1.0 does not accept passwords (ADR ruling).
 2. CORRUPT / truncated → PDFSyntaxError (on open or mid-iteration) → parse_error.
 3. SCANNED / image-only → resolved Open Question 3. If the document's average
-   extractable chars-per-page is below `NEO_PDF_MIN_CHARS_PER_PAGE`, reject with a
-   clear "OCR isn't supported" message rather than SILENTLY emitting an empty
-   document. This DELIBERATELY differs from DOCX's empty-but-valid rule: a PDF
-   with no text layer is almost always a scan, and a silent empty doc is the
-   exact failure we are avoiding.
+   extractable chars-per-page is below `NEO_PDF_MIN_CHARS_PER_PAGE`, it is not a
+   native-text PDF. ADR 0004: when OCR is enabled (`NEO_OCR_ENABLED`) and the page
+   count is within `NEO_OCR_MAX_PAGES`, the scan is OCR'd (see `ocr.py`) instead of
+   rejected; otherwise the historical reject stands (default: OCR off), never a
+   SILENT empty document. This differs from DOCX's empty-but-valid rule: a PDF with
+   no text layer is almost always a scan.
 """
 
 from __future__ import annotations
@@ -37,10 +38,16 @@ import time
 from app.ai.parsing.protocol import ChildParseError
 
 _DEFAULT_MIN_CHARS_PER_PAGE = 10  # ADR 0003 OQ3; scanned pages measure 0, real text pages hundreds+
+_DEFAULT_OCR_MAX_PAGES = 15  # ADR 0004 OQ a
+_DEFAULT_OCR_MIN_CONFIDENCE = 60.0  # ADR 0004 OQ d (calibrated)
 
 _ENCRYPTED_MSG = "This PDF is password-protected or encrypted, which is not supported."
 _CORRUPT_MSG = "This file is not a readable PDF (it may be corrupt or truncated)."
 _SCANNED_MSG = "No extractable text — if this is a scanned document, OCR isn't supported yet."
+_UNREADABLE_MSG = (
+    "This looks like a scanned document, but no readable text could be extracted from it."
+)
+_OCR_PAGE_TOO_LARGE_MSG = "A page of this scan is too large to process."
 
 
 def _min_chars_per_page() -> int:
@@ -48,7 +55,46 @@ def _min_chars_per_page() -> int:
     return int(raw) if raw and raw.isdigit() else _DEFAULT_MIN_CHARS_PER_PAGE
 
 
-def parse_pdf(data: bytes) -> list[dict[str, object]]:
+def _ocr_enabled() -> bool:
+    return os.environ.get("NEO_OCR_ENABLED") == "1"
+
+
+def _ocr_max_pages() -> int:
+    raw = os.environ.get("NEO_OCR_MAX_PAGES")
+    return int(raw) if raw and raw.isdigit() else _DEFAULT_OCR_MAX_PAGES
+
+
+def _ocr_min_confidence() -> float:
+    raw = os.environ.get("NEO_OCR_MIN_CONFIDENCE")
+    try:
+        return float(raw) if raw else _DEFAULT_OCR_MIN_CONFIDENCE
+    except ValueError:
+        return _DEFAULT_OCR_MIN_CONFIDENCE
+
+
+def _ocr_scanned(data: bytes, n_pages: int) -> dict[str, object]:
+    """ADR 0004 slice 1: OCR a scanned PDF. Page cap is enforced BEFORE any
+    rasterisation (over-cap → honest reject; large scans are slice-2/async). A
+    document whose pages all fall below the confidence floor (no usable text) is
+    rejected as unreadable — the same outcome as the historical scanned reject,
+    reached after attempting OCR."""
+    if n_pages > _ocr_max_pages():
+        raise ChildParseError(
+            f"scan too large to OCR yet (max {_ocr_max_pages()} pages)",
+            error_class="parse_error",
+        )
+    from app.ai.parsing.ocr import OcrPageTooLargeError, ocr_pdf
+
+    try:
+        blocks = ocr_pdf(data, min_confidence=_ocr_min_confidence())
+    except OcrPageTooLargeError as e:
+        raise ChildParseError(_OCR_PAGE_TOO_LARGE_MSG, error_class="parse_error") from e
+    if not blocks:
+        raise ChildParseError(_UNREADABLE_MSG, error_class="parse_error")
+    return {"blocks": blocks, "extraction_method": "ocr"}
+
+
+def parse_pdf(data: bytes) -> list[dict[str, object]] | dict[str, object]:
     # ponytail: test-only seam (env never set in prod) proving the PDF path
     # inherits the harness wall-clock kill — sleeps so the parent's communicate()
     # timeout fires and SIGKILLs the group.
@@ -103,8 +149,12 @@ def parse_pdf(data: bytes) -> list[dict[str, object]]:
         raise ChildParseError(_CORRUPT_MSG, error_class="parse_error")
 
     # 3. Scanned/image-only detection (OQ3): average extractable chars-per-page
-    # below the floor -> reject, never a silent empty document.
+    # below the floor -> not a native-text PDF.
     if total_chars < n_pages * _min_chars_per_page():
+        # ADR 0004: OCR the scan instead of rejecting, when enabled and within the
+        # page cap. Otherwise keep the historical reject (default: OCR off).
+        if _ocr_enabled():
+            return _ocr_scanned(data, n_pages)
         raise ChildParseError(_SCANNED_MSG, error_class="parse_error")
 
     return blocks

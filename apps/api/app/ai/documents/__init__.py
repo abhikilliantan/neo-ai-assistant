@@ -72,6 +72,10 @@ def build_document_parser(settings: Settings) -> DocumentParser:
             min_chars_per_page=settings.document_pdf_min_chars_per_page,
             max_memory_bytes=settings.document_parse_max_memory_bytes,
             timeout_seconds=settings.document_parse_timeout_seconds,
+            ocr_enabled=settings.document_ocr_enabled,
+            ocr_max_pages=settings.document_ocr_max_pages,
+            ocr_timeout_seconds=settings.document_ocr_timeout_seconds,
+            ocr_min_confidence=settings.document_ocr_min_confidence,
         )
     return ContentTypeDocumentParser(text_parser=text_parser, native=native, fallback=fallback)
 

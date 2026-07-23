@@ -111,6 +111,12 @@ async def upload_document(
     # cannot interrupt CPU-bound sync work — it only cancels at await points.
     # On ANY failure after the store, fire the compensating delete so the residue
     # is nothing (no row, no bytes) rather than an orphaned object.
+    # ADR 0004: a scanned PDF may OCR synchronously, which legitimately needs
+    # longer than the 30s text budget — give the route wait_for the larger OCR
+    # budget so it never aborts an OCR parse before the subprocess's own kill.
+    parse_timeout = settings.document_parse_timeout_seconds
+    if settings.document_ocr_enabled and declared_type == PDF_CONTENT_TYPE:
+        parse_timeout = max(parse_timeout, settings.document_ocr_timeout_seconds)
     try:
         document = await asyncio.wait_for(
             ingest.ingest(
@@ -124,7 +130,7 @@ async def upload_document(
                 storage_backend=storage.backend_id,
                 content_sha256=content_sha256,
             ),
-            timeout=settings.document_parse_timeout_seconds,
+            timeout=parse_timeout,
         )
         chunk_count = await DocumentRepository(session).count_chunks(document.id)
     except TimeoutError as e:
@@ -230,6 +236,8 @@ def _to_result(chunk: DocumentChunk, similarity: float) -> DocumentSearchResult:
         page_start=chunk.page_start,
         page_end=chunk.page_end,
         section=chunk.section,
+        # ADR 0004: OCR-derived docs render "(OCR)"; the doc is eager-loaded.
+        is_ocr=chunk.document.extraction_method == "ocr",
     )
     return DocumentSearchResult(
         document_id=chunk.document_id,

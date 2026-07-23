@@ -114,6 +114,7 @@ class DocumentIngestService:
             content_type=content_type,
             byte_size=len(data),
             full_text=parsed.full_text,
+            extraction_method=parsed.extraction_method,  # ADR 0004: "text" | "ocr"
             storage_key=storage_key,
             storage_backend=storage_backend,
             content_sha256=content_sha256,

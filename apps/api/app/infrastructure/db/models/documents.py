@@ -25,6 +25,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -47,6 +48,11 @@ if TYPE_CHECKING:
 # async ingest; the 8b service only ever writes `ready` (all-or-nothing txn).
 DOCUMENT_STATUSES = ("pending", "ready", "failed")
 
+# ADR 0004: how a document's text was obtained. "text" = natively extracted
+# (pdfminer / python-docx / plain text); "ocr" = reconstructed from page images.
+# Whole-document, because a PDF either has a usable text layer or it does not.
+EXTRACTION_METHODS = ("text", "ocr")
+
 
 class Document(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "documents"
@@ -66,7 +72,14 @@ class Document(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="ready")
-    # Canonical extracted text — chunk char offsets index into THIS string.
+    # ADR 0004: "text" (native extraction) or "ocr" (reconstructed from page
+    # images). server_default "text" backfills legacy rows correctly — they all
+    # predate OCR and were natively extracted.
+    extraction_method: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="text"
+    )
+    # Canonical extracted text — chunk char offsets index into THIS string. For an
+    # OCR document this is the OCR-reconstructed text; offsets are exact into it.
     full_text: Mapped[str] = mapped_column(Text, nullable=False)
     # ADR 0002: original-file storage. The bytes live OUTSIDE the DB behind a
     # StorageProvider; these carry the opaque pointer + provenance + integrity.
@@ -84,6 +97,10 @@ class Document(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
         CheckConstraint(
             f"status IN {DOCUMENT_STATUSES!r}",
             name="ck_documents_status",
+        ),
+        CheckConstraint(
+            f"extraction_method IN {EXTRACTION_METHODS!r}",
+            name="ck_documents_extraction_method",
         ),
         Index("ix_documents_organization_id", "organization_id"),
     )
@@ -118,6 +135,10 @@ class DocumentChunk(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # ADR 0004: mean per-word OCR confidence (0-100) across the blocks this chunk
+    # packs. NULL for natively-extracted chunks. Recorded for honest provenance;
+    # retrieval does not filter by it.
+    ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     document: Mapped[Document] = relationship()
     organization: Mapped[Organization] = relationship()

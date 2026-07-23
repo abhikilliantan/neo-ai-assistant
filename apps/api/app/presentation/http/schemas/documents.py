@@ -45,6 +45,9 @@ class DocumentPositionOut(BaseModel):
     page_start: int | None = None
     page_end: int | None = None
     section: str | None = None
+    # ADR 0004: the source document was OCR-derived (the `citation` string already
+    # carries "(OCR)"); exposed structurally so the UI can flag it too.
+    is_ocr: bool = False
 
 
 class DocumentSearchResult(BaseModel):

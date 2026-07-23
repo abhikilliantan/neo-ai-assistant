@@ -251,3 +251,37 @@ Notes:
 - No .env changes; floor read from the code default (settings.py). Not committed - PM review of
   the negative controls pending.
 ```
+
+
+<!-- Appended by ADR 0004 slice 1 (OCR) — do not edit; append new runs below. -->
+## OCR fixture + confidence calibration (ADR 0004 slice 1)
+
+`neo_retrieval_benchmark_v1_scanned.pdf` — a 4-page IMAGE-ONLY PDF (zero text
+layer) rendered from real handbook excerpts (annual leave / bereavement / laptop /
+share options). Purpose: prove OCR'd text is searchable and calibrate the
+confidence floor (`document_ocr_min_confidence`) from data, not a guess.
+
+Config: DOCUMENT_OCR_ENABLED=true, DPI=200 (code-fixed), voyage-3.5, block_aware.
+
+Text recovery (Tesseract 5.5.0, in the api container): **100% exact** on all four
+clean pages — e.g. "Annual leave entitlement is 26 days per calendar year, in
+addition to public holidays." recovered verbatim.
+
+Per-page mean word-confidence, by scan quality (same sentence, worsening):
+
+```
+clean render            95.4 – 96.0    perfect text
+light  degradation      95.9           perfect text
+medium degradation      54.5           garbled ("onudenent", "calendary")
+heavy  degradation      0 (no words)   auto-dropped → doc rejected as unreadable
+```
+
+Ruling (d) floor set to **60** (was provisionally 50): it sits in the wide gap
+between clean scans (~95) and the garbled tier (~54.5), so it drops near-garbage
+while keeping every clean scan with margin. Blank/illegible pages yield no words
+and are dropped regardless. Env-tunable per corpus; lower toward 50 to admit
+more marginal pages (flagged "(OCR)" + stored ocr_confidence), raise to be stricter.
+
+Caveat: these renders are pristine (no camera/scanner noise, skew from real paper).
+Genuine photographed scans typically land ~75–90; the 60 floor is conservative for
+that range. Recalibrate if a real-paper corpus shows a different distribution.

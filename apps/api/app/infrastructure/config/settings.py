@@ -174,6 +174,24 @@ class Settings(BaseSettings):
     # pages extract 0 chars, real text pages hundreds+, so 10 separates comfortably
     # without rejecting sparse-but-real text. Ops-tunable per corpus.
     document_pdf_min_chars_per_page: int = 10
+    # ADR 0004 slice 1: capped-synchronous OCR for scanned PDFs. All OFF by default
+    # (Decision E) — shipped dark, enabled per pilot. When enabled, a scanned PDF
+    # (below the chars-per-page floor above) with page count <= document_ocr_max_pages
+    # is OCR'd in the parse child instead of rejected; larger scans are rejected
+    # honestly (async OCR is slice 2). The OCR path gets its own, larger wall-clock
+    # budget (document_ocr_timeout_seconds) distinct from the 30s text path, still
+    # hard-killed by the harness. A page whose mean OCR word-confidence falls below
+    # document_ocr_min_confidence has its text DROPPED (not the whole upload failed);
+    # if every page is below the floor, the document is rejected as unreadable.
+    document_ocr_enabled: bool = False
+    document_ocr_max_pages: int = 15
+    document_ocr_timeout_seconds: float = 90.0
+    # Mean per-word Tesseract confidence (0-100) floor. Calibrated from data
+    # (ADR 0004 OQ d, Decision F — scanned benchmark fixture): clean scans measure
+    # ~95, a heavily-degraded/garbled page ~54 (mostly wrong words), an illegible
+    # page yields no words (auto-dropped). 60 sits in that gap — it drops the
+    # garbled tier while keeping every clean scan with wide margin. Env-tunable.
+    document_ocr_min_confidence: float = 60.0
     # ADR 0003: PER-FORMAT enablement of real (native) parsers — comma-separated
     # format keys ("docx", "pdf"). Empty default → no native parser; unlisted
     # formats fall to the fallback (mock in tests, reject in prod). Enabling

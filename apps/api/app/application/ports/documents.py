@@ -57,6 +57,9 @@ class ParsedBlock(BaseModel):
     text: str
     page: int | None = None  # 1-based page for paginated formats (PDF); None otherwise
     section: str | None = None  # human label (heading/paragraph/sheet); None if the format has none
+    # ADR 0004: mean per-word OCR confidence (0-100) for an OCR-derived block;
+    # None for natively-extracted text. The chunker aggregates it per chunk.
+    confidence: float | None = None
 
 
 class ParsedDocument(BaseModel):
@@ -67,6 +70,10 @@ class ParsedDocument(BaseModel):
 
     content_type: str
     blocks: list[ParsedBlock]
+    # ADR 0004: how the text was obtained. "text" = natively extracted (pdfminer,
+    # python-docx, plain text); "ocr" = reconstructed from page images. Whole-
+    # document, because a PDF either has a usable text layer or it does not.
+    extraction_method: str = "text"
 
     @property
     def full_text(self) -> str:
@@ -87,19 +94,26 @@ class DocumentPosition(BaseModel):
     page_start: int | None = None
     page_end: int | None = None
     section: str | None = None
+    # ADR 0004: the source document was OCR-derived. render() appends "(OCR)" so a
+    # citation never claims the same authority as native-text extraction.
+    is_ocr: bool = False
 
     def render(self) -> str:
         """Canonical, honest citation string. Backend truth for 8e's UI to
         mirror. Prefers the strongest real locator: page(s) → section →
-        character offsets (never fabricates a page).
+        character offsets (never fabricates a page). Appends "(OCR)" when the
+        text was reconstructed from page images (ADR 0004).
         """
         if self.page_start is not None:
             if self.page_end is not None and self.page_end != self.page_start:
-                return f"pp. {self.page_start}-{self.page_end}"
-            return f"p. {self.page_start}"
-        if self.section is not None:
-            return f"section {self.section}"
-        return f"chars {self.char_start}-{self.char_end}"
+                base = f"pp. {self.page_start}-{self.page_end}"
+            else:
+                base = f"p. {self.page_start}"
+        elif self.section is not None:
+            base = f"section {self.section}"
+        else:
+            base = f"chars {self.char_start}-{self.char_end}"
+        return f"{base} (OCR)" if self.is_ocr else base
 
 
 class DocumentChunk(BaseModel):
@@ -116,6 +130,9 @@ class DocumentChunk(BaseModel):
     ordinal: int
     text: str
     position: DocumentPosition
+    # ADR 0004: mean OCR confidence (0-100) across the blocks this chunk packs;
+    # None for natively-extracted chunks. Persisted per row for honest provenance.
+    ocr_confidence: float | None = None
 
 
 class DocumentParser(Protocol):

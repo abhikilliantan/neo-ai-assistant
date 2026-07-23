@@ -49,11 +49,18 @@ def main() -> int:
         _emit({"error_class": "unsupported", "message": f"no parser named {name!r}"})
         return 0
     try:
-        blocks = parser(data)  # type: ignore[operator]  # may hang / os._exit / allocate / raise
+        result = parser(data)  # type: ignore[operator]  # may hang / os._exit / allocate / raise
     except ChildParseError as e:
         _emit({"error_class": e.error_class, "message": str(e)})
         return 0
-    _emit({"blocks": blocks})
+    # A parser returns either a bare block list (extraction_method defaults to
+    # "text") or a dict {"blocks", "extraction_method"} when it needs to report
+    # how the text was obtained (ADR 0004: the OCR path returns "ocr").
+    if isinstance(result, dict):
+        method = result.get("extraction_method", "text")
+        _emit({"blocks": result["blocks"], "extraction_method": method})
+    else:
+        _emit({"blocks": result})
     return 0
 
 
