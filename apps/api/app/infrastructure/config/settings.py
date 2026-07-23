@@ -205,7 +205,13 @@ class Settings(BaseSettings):
     # than, memory_retrieval_min_similarity (0.7): document retrieval casts a
     # wider net than personal-memory recall, and this gate drops topical noise
     # rather than tuning recall. Ops-tunable per corpus.
-    document_search_min_similarity: float = 0.5
+    # Lowered 0.50 -> 0.475 (retrieval-recall slice): voyage-3.5 compresses
+    # relevant cosine similarities into ~0.46-0.67 on prose, so a 0.50 floor sat
+    # atop a ~0.04-wide safe window and silently cut real matches at 0.46-0.50.
+    # 0.475 recovers them while staying above the benchmark's negative-control
+    # best-rejected band (~0.457-0.462). Validated against the 4-negative-control
+    # retrieval benchmark; if a negative ever leaks here, reranking is the fix.
+    document_search_min_similarity: float = 0.475
 
     @property
     def cors_origins(self) -> list[str]:

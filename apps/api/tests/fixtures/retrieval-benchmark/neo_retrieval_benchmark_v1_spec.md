@@ -25,12 +25,17 @@ Do not adjust any setting mid-run. A benchmark is only comparable if the whole s
 | 4 | `can I work from abroad` | Advance approval from People Ops + Finance; 30 consecutive days max | §2 | Policy nuance, not a keyword lookup. |
 | 5 | `who do you call if something happens to me at work` | Emergency contact record; People Ops only | §10 | Conversational phrasing, distant section. |
 | 6 | `what is the company dental insurance policy` | **NOTHING — no answer exists** | — | **Negative control.** |
+| 7 | `where can I park my car at the office` | **NOTHING — no answer exists** | — | **Negative control** (facilities — no parking policy anywhere in the handbook). |
+| 8 | `does the company pay for a gym membership` | **NOTHING — no answer exists** | — | **Negative control** (benefits — no gym/fitness/wellness perk; sits near the EAP §10 and learning-budget §8 without answering). |
+| 9 | `how many paid days off do I get for jury duty` | **NOTHING — no answer exists** | — | **Negative control, adversarial** (leave — no jury-duty leave; competes directly with §3, which is full of "days"/"leave" and five real leave types). |
 
-### Query 6 is the most important one
+### The negative controls are the most important queries
 
-The document contains no dental policy. Correct behaviour is **zero results** — the floor rejects everything. If Query 6 returns a passage, the floor is too permissive and every other result becomes suspect, because we'd have no evidence the system can say "I don't know."
+The document contains no dental, parking, gym, or jury-duty policy. Correct behaviour for Q6–Q9 is **zero results** — the floor rejects everything. If any of them returns a passage, the floor is too permissive and every *positive* result becomes suspect, because we'd have no evidence the system can say "I don't know."
 
 A benchmark that only tests recall will happily approve a system that matches everything.
+
+**Why four, not one (added for the floor-lowering slice).** A single negative control (Q6 alone) proves too little: the safe floor window for voyage-3.5 on this corpus is only ~0.04 wide (real matches bottom out ~0.506; Q6's best-rejected candidate is ~0.457–0.462). One lucky control passing doesn't tell us how many genuinely-absent, plausible-sounding questions would sneak through at 0.46–0.48. Q7–Q9 were chosen to (a) be genuinely absent (verified against the corpus — unlike share-option vesting, which IS in §4/§11 and cannot be a negative), (b) sound like they belong in an employee handbook, and (c) span different sections so they probe different regions of the embedding space. Q9 (jury duty) is deliberately the hardest: it is leave-adjacent, so it stress-tests whether a lowered floor leaks a leave chunk as a confidently-wrong answer. **Lowering the floor ships only if ALL FOUR hold at zero.** A leak on any is the signal that no floor can separate signal from noise on this model, and that reranking (retrieve wide → calibrated rerank score → threshold on that) is the durable fix instead.
 
 ## Scoring
 
@@ -182,4 +187,67 @@ Notes:
   the OQ2 gate is not met. If the goal is citation precision rather than score margin,
   the gate itself may warrant revisiting — but per the accepted decision, this is a
   reject, and nothing was tuned to force a pass.
+```
+
+
+<!-- Appended by retrieval-recall slice (floor 0.50 -> 0.475 + 4 negative controls) — do not edit; append new runs below. -->
+```
+Run:        v3 (floor 0.475 + expanded negative controls Q7-Q9)
+Date:       2026-07-23
+Commit:     working tree (uncommitted): floor 0.50->0.475, spec adds Q7-Q9
+Config:     chunk_size=1000 chars, overlap=200, floor=0.475, top_k=5, voyage-3.5 (1024d)
+            document_chunker=block_aware (current code DEFAULT; ADR 0001 Amendment 1)
+            (read from live settings: floor=0.475, model=voyage-3.5, chunker=block_aware, dim=1024)
+Chunks:     21   (same corpus + block_aware as v2; deterministic ingest)
+Method:     fresh registered org, doc uploaded via POST /api/v1/documents (real Voyage
+            "document" embeddings). Per-query RAW similarity read from the exact
+            production path (DocumentRepository.search_chunks, no floor) so both floors
+            can be applied in analysis and negatives' best-rejected score is visible.
+            Query embedded input_type="query". Voyage 429s retried (25s waits), not abandoned.
+
+                                top raw   char range     verdict @0.475   margin vs 0.475
+Q1 annual leave       [pos]     0.6557    3730-4498      PASS              +0.1807
+Q2 what computer      [pos]     0.5295    7220-8172      PASS              +0.0545
+Q3 bereavement        [pos]     0.5060    5213-6323      PASS              +0.0310  (worst positive)
+Q4 work from abroad   [pos]     0.5317    2965-3761      PASS              +0.0567
+Q5 emergency          [pos]     0.5436    15313-16185    PASS              +0.0686
+Q6 dental      (ZERO) [neg]     0.4574    (best rejected)  ZERO RESULTS    -0.0176
+Q7 parking     (ZERO) [neg]     0.4368    (best rejected)  ZERO RESULTS    -0.0382
+Q8 gym         (ZERO) [neg]     0.4630    (best rejected)  ZERO RESULTS    -0.0120  (highest negative)
+Q9 jury duty   (ZERO) [neg]     0.4410    (best rejected)  ZERO RESULTS    -0.0340
+
+Ship criteria (BOTH must hold to ship the 0.475 floor):
+  (a) Q1-Q5 return expected passages above 0.475, margins recorded ......... PASS
+      (min margin 0.0310 at Q3 - clears the ADR 0001 >=0.03 bar, vs 0.006 at the old 0.50)
+  (b) ALL FOUR negative controls return zero results ....................... PASS
+      (highest negative = Q8 gym 0.4630, which is 0.0120 BELOW the 0.475 floor)
+
+RESULT: SHIP the 0.475 floor. The safe window between worst true positive (Q3 0.5060)
+and best true negative (Q8 gym 0.4630) is 0.0430 wide; 0.475 splits it, +0.031 below the
+worst positive and +0.012 above the best negative.
+
+Notes:
+- Cross-validation: v3 positive scores match the v2 block_aware run almost exactly
+  (Q1 65.57 vs 65.6, Q3 50.60 vs 50.6, Q6 45.74 vs 45.7) - embeddings are deterministic,
+  same 21 block_aware chunks. The measurement path is sound.
+- HONEST CAVEAT on what this proves. Every benchmark POSITIVE already cleared the OLD 0.50
+  floor, so on THIS corpus 0.50 and 0.475 give the SAME pass/fail verdict. What v3 proves is
+  the SAFETY question: the newly-admitted 0.475-0.50 band contains NO negative-control chunk
+  (best negative 0.463 sits below it), so opening that band does not leak on four adversarial
+  "sounds-like-it-belongs-but-absent" questions. The RECALL GAIN (real user NL phrasings that
+  land at 0.46-0.50 and were being cut) is inferred from the score distribution, not directly
+  demonstrated by these six clean queries - the benchmark has no positive in the 0.475-0.50 band.
+- Q9 (jury duty) is the key adversarial win: leave-vocabulary, top-matched the §3 sick-leave
+  chunk (4498-5411) as predicted, but at 0.441 - correctly BELOW floor. The leave-adjacent
+  negative did NOT leak.
+- Thin margin acknowledged: the safe window is only 0.043 wide and Q8 (gym) clears the floor by
+  just 0.012 on the negative side. 0.475 is safe on this corpus TODAY but has little headroom;
+  a corpus/model shift could close it. That is the standing signal that RERANKING (retrieve wide
+  -> calibrated rerank score -> threshold on that) is the durable fix if headroom ever fails.
+- Same-chunk collisions (nearest-but-irrelevant regions, all correctly rejected): Q6 dental and
+  Q8 gym both top-match the §4 comp/benefits chunk 6123-7254; Q7 parking top-matches the §5
+  equipment chunk 7220-8172 (the same chunk Q2 legitimately matches, but at 0.437 vs Q2's 0.529).
+- Rate limiting: Voyage 429 on Q2/Q3/Q5/Q6/Q8 (retried at 25s, deterministic scores unaffected).
+- No .env changes; floor read from the code default (settings.py). Not committed - PM review of
+  the negative controls pending.
 ```
