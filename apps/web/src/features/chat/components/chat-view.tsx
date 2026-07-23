@@ -189,7 +189,10 @@ export function ChatView() {
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-4">
-        <Card className="flex-1 overflow-hidden">
+        {/* min-h-0 bounds the Card to the available column height so ONLY its
+            inner div scrolls; without it the message list grows the column and
+            pushes the composer below the viewport. */}
+        <Card className="min-h-0 flex-1 overflow-hidden">
           <div ref={scrollRef} className="h-full overflow-auto p-4">
             {loadingHistory ? (
               <p className="text-sm text-muted-foreground">Loading conversation…</p>
