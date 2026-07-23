@@ -246,6 +246,25 @@ def test_document_max_bytes_default_is_25_mib() -> None:
     assert Settings.model_fields["document_max_bytes"].default == 26_214_400  # 25 MiB
 
 
+def test_document_search_floor_is_provider_keyed() -> None:
+    # The floor is model-specific: voyage stays 0.475, bge-m3 needs the higher 0.58
+    # (its cosine distribution sits higher). An unlisted model falls back to
+    # document_search_min_similarity so behaviour is defined for any provider.
+    s = _base()  # code defaults
+    assert s.document_search_floor("voyage-3.5") == 0.475
+    assert s.document_search_floor("bge-m3") == 0.58
+    assert s.document_search_floor("BGE-M3") == 0.58  # case-insensitive
+    assert s.document_search_floor("mock-embed-1") == s.document_search_min_similarity  # fallback
+
+    # Env-overridable map; the fallback is still document_search_min_similarity.
+    s2 = _base(
+        document_search_min_similarity_by_model="bge-m3:0.6",
+        document_search_min_similarity=0.5,
+    )
+    assert s2.document_search_floor("bge-m3") == 0.6
+    assert s2.document_search_floor("voyage-3.5") == 0.5  # unlisted → fallback
+
+
 def test_native_docx_parser_off_by_default() -> None:
     # ADR 0003 per-format enablement: with document_native_parsers empty (default),
     # NO native parser is wired — DOCX falls through to the fallback (mock in tests,

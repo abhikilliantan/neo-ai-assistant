@@ -201,8 +201,10 @@ async def search_documents(
     )
     # ⚠️ FLOOR: omit below-floor hits ENTIRELY. A citation shown at all is an
     # assertion of relevance — a weak match is not returned flagged, it is not
-    # returned. Empty result → a valid empty list, never an error.
-    floor = settings.document_search_min_similarity
+    # returned. Empty result → a valid empty list, never an error. The floor is
+    # PROVIDER-KEYED (the cosine distribution is model-specific), resolved from the
+    # SAME reported model used to scope the search above (5d guard).
+    floor = settings.document_search_floor(embedded.model)
     return [_to_result(chunk, sim) for chunk, sim in hits if sim >= floor]
 
 

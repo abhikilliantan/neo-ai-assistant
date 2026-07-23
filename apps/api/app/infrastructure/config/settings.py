@@ -226,13 +226,37 @@ class Settings(BaseSettings):
     # than, memory_retrieval_min_similarity (0.7): document retrieval casts a
     # wider net than personal-memory recall, and this gate drops topical noise
     # rather than tuning recall. Ops-tunable per corpus.
-    # Lowered 0.50 -> 0.475 (retrieval-recall slice): voyage-3.5 compresses
-    # relevant cosine similarities into ~0.46-0.67 on prose, so a 0.50 floor sat
-    # atop a ~0.04-wide safe window and silently cut real matches at 0.46-0.50.
-    # 0.475 recovers them while staying above the benchmark's negative-control
-    # best-rejected band (~0.457-0.462). Validated against the 4-negative-control
-    # retrieval benchmark; if a negative ever leaks here, reranking is the fix.
+    #
+    # The floor is PROVIDER-KEYED because the cosine-similarity distribution is
+    # model-specific — a single value silently breaks on an embedding-model swap
+    # (see the retrieval benchmark v3/v4 runs). `document_search_min_similarity` is
+    # the FALLBACK for any model not in the map below:
+    #   - voyage-3.5 compresses relevant sims into ~0.46-0.67; negatives top out
+    #     ~0.46, so 0.475 separates (validated, 4 negative controls).
+    #   - bge-m3 (Ollama, local) shifts the whole distribution up: positives
+    #     ~0.60-0.69, negatives up to ~0.56, so it needs ~0.58 (midpoint of the
+    #     0.5628-0.6038 safe window) — 0.475 would LEAK the gym/jury-duty negatives.
+    # Map format: comma-separated "model:floor". Resolve via document_search_floor().
     document_search_min_similarity: float = 0.475
+    document_search_min_similarity_by_model: str = "voyage-3.5:0.475,bge-m3:0.58"
+
+    @property
+    def document_search_floor_map(self) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for pair in self.document_search_min_similarity_by_model.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            model, _sep, floor = pair.partition(":")
+            out[model.strip().lower()] = float(floor.strip())
+        return out
+
+    def document_search_floor(self, embedding_model: str) -> float:
+        """Per-model UI citation floor. Falls back to document_search_min_similarity
+        for a model not listed in the provider-keyed map."""
+        return self.document_search_floor_map.get(
+            embedding_model.strip().lower(), self.document_search_min_similarity
+        )
 
     @property
     def cors_origins(self) -> list[str]:

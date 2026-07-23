@@ -285,3 +285,97 @@ more marginal pages (flagged "(OCR)" + stored ocr_confidence), raise to be stric
 Caveat: these renders are pristine (no camera/scanner noise, skew from real paper).
 Genuine photographed scans typically land ~75–90; the 60 floor is conservative for
 that range. Recalibrate if a real-paper corpus shows a different distribution.
+
+
+<!-- Appended by bge-m3 provider swap run — do not edit; append new runs below. -->
+```
+Run:        v4 (Ollama bge-m3) — SAME corpus + 9 queries as v3; INVESTIGATION only
+Date:       2026-07-23
+Commit:     88f42bc (working tree; nothing tuned or changed)
+Config:     chunk_size=1000 chars, overlap=200, top_k=1 (top-hit measured), block_aware
+            EMBEDDING_PROVIDER=ollama, EMBEDDING_MODEL=bge-m3 (1024d, local)
+            NOTE: bge-m3 IGNORES input_type — no query prefix; doc/query embeddings
+            are SYMMETRIC (ollama provider TODO). floor unchanged at 0.475 (voyage-cal).
+Chunks:     21   (same block_aware chunking as v2/v3 — chunker is model-independent)
+Method:     replicated the production retrieval path in the api container —
+            TextDocumentParser -> BlockAwareChunker -> cosine(top-1) over live
+            Ollama bge-m3 embeddings. Cosine computed in-python (= pgvector 1-<=>).
+
+                              top raw   correct-hit   verdict @0.475   margin vs 0.475
+Q1 annual leave       [pos]   0.6861    YES           returned          +0.2111
+Q2 what computer      [pos]   0.6226    YES           returned          +0.1476
+Q3 bereavement        [pos]   0.6121    YES           returned          +0.1371
+Q4 work from abroad   [pos]   0.6038    YES           returned          +0.1288  (worst positive)
+Q5 emergency          [pos]   0.6098    YES           returned          +0.1348
+Q6 dental      (ZERO) [neg]   0.4190    -             rejected          -0.0560
+Q7 parking     (ZERO) [neg]   0.4516    -             rejected          -0.0234
+Q8 gym         (ZERO) [neg]   0.5628    -             *** LEAKS ***     +0.0878  (highest negative)
+Q9 jury duty   (ZERO) [neg]   0.5405    -             *** LEAKS ***     +0.0655
+
+Separation:
+  worst true-positive  = 0.6038 (Q4 work-from-abroad)
+  best  true-negative  = 0.5628 (Q8 gym; top-matches the §4 comp/benefits chunk 6123-7254)
+  gap (worst_tp - best_tn) = +0.0410  -> SEPARABLE, but NOT at 0.475.
+  safe window (0.5628, 0.6038), width 0.041; midpoint floor = 0.5833.
+
+RESULT: the voyage-calibrated 0.475 floor is WRONG for bge-m3. All 5 positives clear it,
+but TWO of the four negative controls LEAK: gym (0.5628) and jury-duty (0.5405) both sit
+ABOVE 0.475 and would be returned as confident-looking (wrong) citations. A benchmark that
+only checked recall would pass; the negative controls catch it. A bge-m3 floor of ~0.58
+(midpoint 0.5833) cleanly separates — keeps all 5 positives (min 0.6038) and rejects all 4
+negatives (max 0.5628).
+
+Notes:
+- bge-m3 shifts the WHOLE distribution up vs voyage AND compresses the top: positives
+  0.60-0.69 (voyage 0.51-0.66), negatives up to 0.56 (voyage best-negative ~0.46). The
+  0.475 floor sat safely above voyage's negatives but is far below bge-m3's, so the two
+  benefits/leave-ADJACENT negatives (gym near §4 comp, jury-duty near §3 leave) now clear it.
+- Retrieval CORRECTNESS is intact: 5/5 positives return the chunk containing the expected
+  answer (Q3/Q4 answers sit inside a boundary-packed block_aware chunk). Only the FLOOR is
+  mis-set for the new model.
+- Window width 0.041 is about the same thinness as voyage's ~0.043 — workable but not roomy;
+  a corpus/model shift could close it (reranking remains the durable fix if it ever does).
+- INVESTIGATION ONLY: nothing changed. document_search_min_similarity is still 0.475.
+```
+
+
+<!-- Appended by bge-m3 floor-fix VERIFICATION run — do not edit; append new runs below. -->
+```
+Run:        v5 (bge-m3 @ provider-keyed floor 0.58) — VERIFICATION of the floor fix
+Date:       2026-07-23
+Commit:     88f42bc (working tree: floor made provider-keyed; nothing else tuned)
+Config:     chunk_size=1000, overlap=200, top_k=1, block_aware; EMBEDDING_PROVIDER=ollama
+            EMBEDDING_MODEL=bge-m3 (1024d). Floor now PROVIDER-KEYED in settings:
+            DOCUMENT_SEARCH_MIN_SIMILARITY_BY_MODEL="voyage-3.5:0.475,bge-m3:0.58"
+            (fallback DOCUMENT_SEARCH_MIN_SIMILARITY=0.475 for unlisted models).
+            Resolved floor for bge-m3 = 0.58 (confirmed from live settings).
+Chunks:     21   (same block_aware chunking; deterministic ollama embeddings → same
+                  scores as v4, now judged against 0.58)
+Method:     re-embedded corpus + 9 queries via live Ollama bge-m3 in the api container;
+            resolved the floor from settings.document_search_floor("bge-m3") and applied it.
+
+                              top     verdict @0.58
+Q1 annual leave       [pos]   0.6861  PASS   (correct chunk)
+Q2 what computer      [pos]   0.6226  PASS   (correct chunk)
+Q3 bereavement        [pos]   0.6121  PASS   (correct chunk)
+Q4 work from abroad   [pos]   0.6038  PASS   (correct chunk; worst positive, +0.024 over floor)
+Q5 emergency          [pos]   0.6098  PASS   (correct chunk)
+Q6 dental      (ZERO) [neg]   0.4190  REJECT
+Q7 parking     (ZERO) [neg]   0.4516  REJECT
+Q8 gym         (ZERO) [neg]   0.5628  REJECT (highest negative, -0.017 under floor)
+Q9 jury duty   (ZERO) [neg]   0.5405  REJECT
+
+RESULT: GREEN. 5/5 positives pass, 4/4 negatives reject. The 0.58 floor splits the
+safe window (0.5628, 0.6038): +0.024 below the worst positive, +0.017 above the best
+negative. voyage-3.5 stays 0.475 in the same map — switching back does not regress.
+
+Notes:
+- Fix is PROVIDER-KEYED, not a flat re-tune: settings.document_search_floor(model) resolves
+  the floor from the query's reported embedding model, so a future swap forces a conscious
+  recalibration instead of silently leaking. The mock model (tests) falls back to
+  DOCUMENT_SEARCH_MIN_SIMILARITY, so existing floor tests are unaffected.
+- Window is THIN (0.041; only 0.017 of slack on the negative side). Recorded, not fixed here.
+  The durable widening is wiring bge-m3's retrieval QUERY PREFIX (the ollama provider's
+  input_type TODO) — likely lifts positives and widens the gap — plus reranking. Separate
+  change, AFTER this floor fix lands.
+```
