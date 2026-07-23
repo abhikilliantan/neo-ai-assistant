@@ -104,7 +104,9 @@ def _usage_tokens(usage: object) -> tuple[int | None, int | None]:
 
 
 _MEMORY_CONTEXT_PREAMBLE = (
-    "Things you remember about this user (use where relevant, don't mention unless helpful):"
+    "The following facts were retrieved from this user's saved memories. Treat them as the "
+    "source of truth about the user; use them where relevant, and do not invent details "
+    "beyond what they state:"
 )
 
 

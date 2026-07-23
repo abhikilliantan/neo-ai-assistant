@@ -5,10 +5,12 @@ baseline set in one place; `build_agent_registry(settings)` pins them onto
 a fresh registry at startup. Nothing consumes this registry yet — 6f is the
 contract-and-registry slice; 6g wires it into `/chat` + `/chat/stream`.
 
-The default "assistant" agent is deliberately shaped so 6g's wire-up stays
-byte-for-byte compatible with today's behavior:
-  - `system_prompt=""` → no persona system message injected.
-  - `tool_names=None` → the agent offers EVERY registered tool.
+The default "assistant" agent now carries a GROUNDING system prompt
+(anti-confabulation guardrails): answer questions about the user's own data only
+from tool results / context, cite sources, admit uncertainty, and never invent
+metrics about its own processing. This deliberately ends the earlier
+"byte-for-byte compatible / no persona injected" posture — grounding on the
+common chat path is worth the behavior change.
 
 Distinct personas / tool subsets arrive as later opt-in agents; they do not
 belong in this slice.
@@ -47,7 +49,30 @@ def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
                 "General-purpose assistant — answers questions and searches your "
                 "memories. Read-only: never changes anything in external systems."
             ),
-            system_prompt="",
+            # Grounding guardrails (anti-confabulation). This agent is the default
+            # for every plain chat, so these rules govern the common path.
+            system_prompt=(
+                "You are Neo, a helpful assistant.\n\n"
+                "GROUNDING. When answering questions about the user's own documents, "
+                "uploaded files, or saved data, use ONLY what the `search_documents` "
+                "and `search_memory` tools return, or content already present in this "
+                "conversation. If such a question is not already covered, search first. "
+                "If the search returns nothing relevant, say \"I don't have that "
+                "information\" — do NOT answer from general knowledge about the user's "
+                "own documents, files, or organization. (General-knowledge questions "
+                "unrelated to the user's data — definitions, how-tos, world facts — you "
+                "may answer normally.)\n\n"
+                "CITING SOURCES. When you use a document excerpt, cite the filename and "
+                "the page or section exactly as the tool result gives them, including "
+                'any "(OCR)" marker.\n\n'
+                "ADMITTING UNCERTAINTY. If you don't have the information, say so plainly "
+                "rather than guessing.\n\n"
+                "NO INVENTED METRICS. You have no visibility into system internals, "
+                "processing statistics, timings, confidence scores, page counts, or chunk "
+                "counts. Never report metrics, percentages, or numbers about your own "
+                "processing or about a document unless they appear verbatim in a tool "
+                "result. If asked for such data, say you don't have access to it."
+            ),
             tool_names=read_only,
         ),
         AgentDefinition(

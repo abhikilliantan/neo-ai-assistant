@@ -21,6 +21,7 @@ from app.ai.providers.mock import MockProvider
 from app.application.ports.chat import ChatCompletion, ChatMessage, ChatStreamEvent
 from app.application.ports.embeddings import EmbeddingResult, InputType
 from app.infrastructure.db.repositories import MemoryRepository
+from app.presentation.http.routers.chat import _MEMORY_CONTEXT_PREAMBLE
 
 # --- test doubles ------------------------------------------------------------
 
@@ -155,15 +156,19 @@ def _parse_sse(raw: str) -> list[dict[str, Any]]:
 
 
 def _system_content_from(calls: list[list[ChatMessage]]) -> str | None:
-    """Return the concatenated content of any role='system' messages in the
-    most recent call, or None if none.
+    """Return the MEMORY-CONTEXT system message from the most recent call, or
+    None if none was injected.
+
+    The default assistant agent now always prepends a grounding persona system
+    message; this helper isolates the retrieved-memory context (identified by its
+    preamble) so the memory-injection assertions test memory, not the persona.
     """
     if not calls:
         return None
-    system_parts = [m.content for m in calls[-1] if m.role == "system"]
-    if not system_parts:
-        return None
-    return "\n".join(system_parts)
+    for m in calls[-1]:
+        if m.role == "system" and m.content.startswith(_MEMORY_CONTEXT_PREAMBLE):
+            return m.content
+    return None
 
 
 # --- 1: retrieval injects a matching memory ---------------------------------

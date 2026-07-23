@@ -227,14 +227,13 @@ async def _register_and_token(client: AsyncClient, email: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_chat_default_agent_is_transparent(db_app) -> None:  # type: ignore[no-untyped-def]
+async def test_chat_default_agent_injects_grounding_persona(db_app) -> None:  # type: ignore[no-untyped-def]
     """/chat with the default assistant agent:
     - agent lookup uses DEFAULT_AGENT_NAME ("assistant"),
-    - provider receives messages IDENTICAL to `augmented` (no extra
-      persona system message — new user, so retrieval yields nothing and
-      augmented == body.messages),
-    - provider receives tools whose names match the full request-registry
-      set (nothing filtered out).
+    - the provider receives the grounding persona as a leading system message
+      (a fresh user has no memories, so the persona is the ONLY system message),
+    - the user turn follows it,
+    - the read-only tool set is present (nothing filtered for the default agent).
     """
     spy_provider = _RecordingProvider()
     spy_registry = _RecordingAgentRegistry(db_app.state.agent_registry)
@@ -254,12 +253,16 @@ async def test_chat_default_agent_is_transparent(db_app) -> None:  # type: ignor
     # Endpoint asked the registry for the default agent — and only that.
     assert spy_registry.get_calls == [DEFAULT_AGENT_NAME]
 
-    # No persona system message injected — messages are exactly what
-    # `augmented` would be (identical to body.messages for a fresh user
-    # with no memories retrieved).
-    assert spy_provider.last_messages == [ChatMessage(role="user", content="hello")]
+    # The grounding persona is prepended as a leading system message; the user
+    # turn follows. No memory system message (fresh user, nothing retrieved).
+    assert spy_provider.last_messages is not None
+    msgs = spy_provider.last_messages
+    assert msgs[0].role == "system"
+    assert msgs[0].content.startswith("You are Neo, a helpful assistant.")
+    assert "NO INVENTED METRICS" in msgs[0].content
+    assert msgs[1:] == [ChatMessage(role="user", content="hello")]
 
-    # Tools unfiltered — the full request-registry set is present.
+    # Tools present — the full request-registry set (nothing filtered).
     assert spy_provider.last_tools is not None
     seen_names = {s["name"] for s in spy_provider.last_tools}
     # Baseline (6c) tools; assert membership rather than exact equality so
@@ -269,9 +272,9 @@ async def test_chat_default_agent_is_transparent(db_app) -> None:  # type: ignor
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_default_agent_is_transparent(db_app) -> None:  # type: ignore[no-untyped-def]
-    """Same byte-compat proof for /chat/stream: default agent lookup runs,
-    messages pass through unchanged, tools are unfiltered.
+async def test_chat_stream_default_agent_injects_grounding_persona(db_app) -> None:  # type: ignore[no-untyped-def]
+    """Same proof for /chat/stream: default agent lookup runs, the grounding
+    persona leads the messages, tools are present.
     """
     spy_provider = _RecordingProvider()
     spy_registry = _RecordingAgentRegistry(db_app.state.agent_registry)
@@ -291,7 +294,11 @@ async def test_chat_stream_default_agent_is_transparent(db_app) -> None:  # type
 
     assert spy_registry.get_calls == [DEFAULT_AGENT_NAME]
 
-    assert spy_provider.last_messages == [ChatMessage(role="user", content="hello")]
+    assert spy_provider.last_messages is not None
+    msgs = spy_provider.last_messages
+    assert msgs[0].role == "system"
+    assert msgs[0].content.startswith("You are Neo, a helpful assistant.")
+    assert msgs[1:] == [ChatMessage(role="user", content="hello")]
     assert spy_provider.last_tools is not None
     seen_names = {s["name"] for s in spy_provider.last_tools}
     assert "echo" in seen_names

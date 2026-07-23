@@ -113,7 +113,10 @@ def test_build_agent_registry_registers_default_assistant() -> None:
 
     assistant = registry.get("assistant")
     assert assistant is not None
-    assert assistant.system_prompt == ""
+    # Grounding guardrails now live on the default agent (anti-confabulation).
+    assert assistant.system_prompt.startswith("You are Neo, a helpful assistant.")
+    assert "NO INVENTED METRICS" in assistant.system_prompt
+    assert "I don't have that information" in assistant.system_prompt
     # 7d: default agent is READ-ONLY now — no None, no workflow. 8d added
     # search_documents (read-only), sorted into the read-only set.
     assert assistant.tool_names == ["echo", "search_documents", "search_memory"]
