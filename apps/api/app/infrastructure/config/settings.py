@@ -152,7 +152,11 @@ class Settings(BaseSettings):
     # Resource limits on UNTRUSTED uploads (8c enforces at the route; the parser
     # enforces max_bytes now). Timeout is enforced by the CALLER via
     # asyncio.wait_for — a parser can't reliably self-timeout mid-CPU-work.
-    document_max_bytes: int = 10_000_000  # 10 MB
+    # Max upload size, enforced by the streaming guard in multipart.read_upload
+    # (→413). 25 MiB default; raise via DOCUMENT_MAX_BYTES in .env, no code change.
+    # Comfortably safe under the 1 GiB parse RLIMIT_AS (document_parse_max_memory_bytes)
+    # and the 200 MiB DOCX decompressed cap below.
+    document_max_bytes: int = 26_214_400  # 25 MiB
     document_max_pages: int = 500
     document_parse_timeout_seconds: float = 30.0
     # ADR 0003: memory cap (RLIMIT_AS) for the parse-isolation child. 1 GiB
@@ -160,7 +164,7 @@ class Settings(BaseSettings):
     # document's working set while hard-killing an unbounded allocation.
     document_parse_max_memory_bytes: int = 1_073_741_824  # 1 GiB
     # ADR 0003: DOCX decompressed-size cap (zip-bomb defense). 200 MiB default
-    # (resolved OQ2) — 20x the 10 MB upload cap; generous for real files, lethal
+    # (resolved OQ2) — 8x the 25 MiB upload cap; generous for real files, lethal
     # to bombs.
     document_docx_max_decompressed_bytes: int = 209_715_200  # 200 MiB
     # ADR 0003: PDF scanned/image-only floor (resolved OQ3). If a PDF's average

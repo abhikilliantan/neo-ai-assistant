@@ -240,6 +240,12 @@ def test_build_document_parser_mock_fallback_is_opt_in() -> None:
     assert isinstance(parser._fallback, MockDocumentParser)
 
 
+def test_document_max_bytes_default_is_25_mib() -> None:
+    # Guards the raised upload cap against a regression back to 10 MB. Checks the
+    # CODE default (env-independent), so a stray DOCUMENT_MAX_BYTES can't mask it.
+    assert Settings.model_fields["document_max_bytes"].default == 26_214_400  # 25 MiB
+
+
 def test_native_docx_parser_off_by_default() -> None:
     # ADR 0003 per-format enablement: with document_native_parsers empty (default),
     # NO native parser is wired — DOCX falls through to the fallback (mock in tests,

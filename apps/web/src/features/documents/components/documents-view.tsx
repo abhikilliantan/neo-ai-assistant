@@ -16,6 +16,11 @@ import {
   uploadDocument,
 } from "@/services/documents";
 
+// Mirrors the backend DOCUMENT_MAX_BYTES default (25 MiB). Display-only — the
+// backend streaming guard is the real boundary (there is no client-side pre-flight
+// cap, so no accept/reject mismatch). Keep in sync if the backend default changes.
+const MAX_UPLOAD_MB = 25;
+
 // File types the backend accepts (mirrors the upload content-type allowlist).
 const ACCEPT =
   ".pdf,.txt,.md,.docx,application/pdf,text/plain,text/markdown," +
@@ -273,7 +278,8 @@ function ResultRow({ result }: { result: DocumentSearchResult }) {
 function uploadErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
-    if (status === 413) return "This file is too large to upload.";
+    if (status === 413)
+      return `This file is too large to upload. The maximum is ${MAX_UPLOAD_MB} MB.`;
     if (status === 415)
       return "That file type isn’t supported yet. Upload a text (.txt) or Markdown (.md) file — PDF and Word support is coming.";
     if (status === 422)

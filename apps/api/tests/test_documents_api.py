@@ -193,6 +193,33 @@ async def test_oversized_upload_returns_413(db_app: FastAPI, db_client: AsyncCli
     assert r.json()["error"]["code"] == "document_too_large"
 
 
+@pytest.mark.asyncio
+async def test_upload_boundary_under_accepted_over_413(
+    db_app: FastAPI, db_client: AsyncClient
+) -> None:
+    # Both sides of the streaming size guard at a small configured limit — the
+    # guard is limit-agnostic, so this proves behaviour at any DOCUMENT_MAX_BYTES.
+    db_app.state.settings.document_max_bytes = 5_000
+    reg = await _register(db_client, "alice@limit8c.example")
+
+    # Comfortably under the limit → accepted (mock parser; %PDF- passes the sniff).
+    under = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("small.pdf", b"%PDF-1.4 " + b"a" * 500, _PDF)},
+        headers=_auth(reg),
+    )
+    assert under.status_code == 200, under.text
+
+    # Over the limit → clean 413 with the standard envelope code.
+    over = await db_client.post(
+        "/api/v1/documents",
+        files={"file": ("big.pdf", b"%PDF-1.4 " + b"a" * 6_000, _PDF)},
+        headers=_auth(reg),
+    )
+    assert over.status_code == 413, over.text
+    assert over.json()["error"]["code"] == "document_too_large"
+
+
 # --- all-or-nothing survives the route --------------------------------------
 
 
