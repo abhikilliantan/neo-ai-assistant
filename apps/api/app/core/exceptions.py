@@ -19,6 +19,7 @@ from app.shared.exceptions.auth import (
     RegistrationClosedError,
 )
 from app.shared.exceptions.common import BadRequestError, NotFoundError
+from app.shared.exceptions.datasets import DatasetIngestError
 from app.shared.exceptions.documents import (
     DocumentParseError,
     DocumentTooLargeError,
@@ -201,6 +202,16 @@ async def _document_parse_handler(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _dataset_ingest_handler(_: Request, exc: Exception) -> JSONResponse:
+    # Over-cap / empty sheet / missing header / decode failure — the client's file
+    # is the problem, so 422. Messages are developer constants (row/column caps,
+    # "header row is empty"), never file content.
+    return JSONResponse(
+        _error_body("dataset_unprocessable", str(exc) or "the spreadsheet could not be ingested"),
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+
+
 async def _embedding_auth_handler(_: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         _error_body(
@@ -253,6 +264,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DocumentTooLargeError, _document_too_large_handler)
     app.add_exception_handler(UnsupportedContentTypeError, _unsupported_content_type_handler)
     app.add_exception_handler(DocumentParseError, _document_parse_handler)
+    app.add_exception_handler(DatasetIngestError, _dataset_ingest_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(ProviderAuthError, _provider_auth_handler)
     app.add_exception_handler(ProviderRateLimitError, _provider_rate_limit_handler)

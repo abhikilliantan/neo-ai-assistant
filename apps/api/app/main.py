@@ -36,6 +36,7 @@ from app.presentation.http.routers import (
     auth_router,
     chat_router,
     conversations_router,
+    datasets_router,
     documents_router,
     memories_router,
     system_router,
@@ -166,6 +167,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(memories_router)
     app.include_router(agents_router)
     app.include_router(documents_router)
+    app.include_router(datasets_router)
     return app
 
 

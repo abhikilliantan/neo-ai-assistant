@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -798,3 +798,24 @@ class DatasetRepository:
             return
         dataset.deleted_at = datetime.now(UTC)
         await self.session.flush()
+
+    async def hard_delete_rows(self, *, dataset_id: UUID, organization_id: UUID) -> int:
+        """Permanently remove a dataset's rows (1b re-ingest/replace). Tenant-scoped
+        by organization_id so a replace can never wipe another tenant's rows.
+        Returns the number deleted."""
+        result = await self.session.execute(
+            delete(DatasetRow)
+            .where(DatasetRow.dataset_id == dataset_id)
+            .where(DatasetRow.organization_id == organization_id)
+        )
+        return result.rowcount or 0  # type: ignore[attr-defined]  # CursorResult at runtime
+
+    async def hard_delete_columns(self, *, dataset_id: UUID, organization_id: UUID) -> int:
+        """Permanently remove a dataset's columns (1b re-ingest/replace).
+        Tenant-scoped by organization_id. Returns the number deleted."""
+        result = await self.session.execute(
+            delete(DatasetColumn)
+            .where(DatasetColumn.dataset_id == dataset_id)
+            .where(DatasetColumn.organization_id == organization_id)
+        )
+        return result.rowcount or 0  # type: ignore[attr-defined]  # CursorResult at runtime
