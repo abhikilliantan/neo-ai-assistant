@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
@@ -9,6 +11,8 @@ from uuid import UUID
 if TYPE_CHECKING:
     from app.infrastructure.db.models import (
         Conversation,
+        Dataset,
+        DatasetColumn,
         DocumentChunk,
         Membership,
         Memory,
@@ -164,3 +168,67 @@ class UserPreferenceRepositoryPort(Protocol):
         organization_id: UUID,
         user_id: UUID,
     ) -> list[UserPreference]: ...
+
+
+# --- structured data (Capability 1, Slice 1a) --------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetColumnSpec:
+    """A typed-schema column to create, as the ingest layer (1b) produces it.
+    `key` is the normalized slug used in DatasetRow.data and in queries."""
+
+    name: str
+    key: str
+    data_type: str = "text"
+    position: int = 0
+    nullable: bool = True
+    semantic_role: str = "none"
+
+
+# One row's payload — a mapping from column.key to its cell value (JSON-serializable).
+DatasetRowData = Mapping[str, object]
+
+
+class DatasetRepositoryPort(Protocol):
+    """Tenant-scoped structured-dataset persistence (Capability 1). Slice 1a is
+    storage-only: create/read/bulk-insert/soft-delete. NO query/aggregation — the
+    SAFE constrained-query surface is 1c. Methods take organization_id explicitly
+    where a row is created or a list is scoped (audit-visible tenant intent,
+    matching the other repos); single-id reads rely on RLS / the caller's session.
+    """
+
+    async def create_dataset(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        description: str | None = None,
+        source_document_id: UUID | None = None,
+        sheet_name: str | None = None,
+        created_by: UUID | None = None,
+        status: str = "ready",
+    ) -> Dataset: ...
+    async def add_columns(
+        self,
+        *,
+        dataset_id: UUID,
+        organization_id: UUID,
+        columns: Sequence[DatasetColumnSpec],
+    ) -> list[DatasetColumn]: ...
+    async def bulk_insert_rows(
+        self,
+        *,
+        dataset_id: UUID,
+        organization_id: UUID,
+        rows: Sequence[DatasetRowData],
+        start_index: int = 0,
+    ) -> int: ...
+    async def get_dataset(self, dataset_id: UUID) -> Dataset | None: ...
+    async def list_datasets(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[Dataset]: ...
+    async def get_columns(self, dataset_id: UUID) -> list[DatasetColumn]: ...
+    async def count_rows(self, dataset_id: UUID) -> int: ...
+    async def update_row_count(self, dataset_id: UUID, n: int) -> None: ...
+    async def soft_delete_dataset(self, dataset_id: UUID) -> None: ...

@@ -1,6 +1,14 @@
 """ORM models. Importing this package registers all tables on Base.metadata."""
 
 from app.infrastructure.db.models.chat import MESSAGE_ROLES, Conversation, Message
+from app.infrastructure.db.models.datasets import (
+    COLUMN_DATA_TYPES,
+    COLUMN_SEMANTIC_ROLES,
+    DATASET_STATUSES,
+    Dataset,
+    DatasetColumn,
+    DatasetRow,
+)
 from app.infrastructure.db.models.documents import (
     DOCUMENT_STATUSES,
     Document,
@@ -23,6 +31,9 @@ from app.infrastructure.db.models.tenancy import (
 from app.infrastructure.db.models.workflows import Workflow
 
 __all__ = [
+    "COLUMN_DATA_TYPES",
+    "COLUMN_SEMANTIC_ROLES",
+    "DATASET_STATUSES",
     "DOCUMENT_STATUSES",
     "EMBEDDING_DIMENSION",
     "MEMBERSHIP_STATUSES",
@@ -30,6 +41,9 @@ __all__ = [
     "MESSAGE_ROLES",
     "ApiKey",
     "Conversation",
+    "Dataset",
+    "DatasetColumn",
+    "DatasetRow",
     "Document",
     "DocumentChunk",
     "Membership",

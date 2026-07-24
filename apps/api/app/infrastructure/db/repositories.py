@@ -13,18 +13,23 @@ Caller (dep) owns the transaction; repositories just flush.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager
 
 from app.application.ports.documents import DocumentChunk as DocumentChunkVO
+from app.application.ports.repositories import DatasetColumnSpec, DatasetRowData
 from app.infrastructure.db.models import (
     Conversation,
+    Dataset,
+    DatasetColumn,
+    DatasetRow,
     Document,
     DocumentChunk,
     Membership,
@@ -660,3 +665,136 @@ class SystemRepository:
         self.session.add(membership)
         await self.session.flush()
         return user, org, membership
+
+
+class DatasetRepository:
+    """Tenant-scoped structured-dataset persistence (Capability 1, Slice 1a).
+
+    Storage ONLY — create/read/bulk-insert/soft-delete. NO query/aggregation
+    (that SAFE constrained-query surface is 1c). RLS filters organization_id at
+    the DB layer, but `list_datasets` ALSO filters it explicitly: the app
+    currently connects as a BYPASSRLS superuser, so the repo must not lean on RLS
+    for tenant scoping. Child rows (columns, data rows) are stamped with the
+    organization_id the caller passes, matching DocumentRepository.add_chunks.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create_dataset(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        description: str | None = None,
+        source_document_id: UUID | None = None,
+        sheet_name: str | None = None,
+        created_by: UUID | None = None,
+        status: str = "ready",
+    ) -> Dataset:
+        dataset = Dataset(
+            organization_id=organization_id,
+            name=name,
+            description=description,
+            source_document_id=source_document_id,
+            sheet_name=sheet_name,
+            created_by=created_by,
+            status=status,
+        )
+        self.session.add(dataset)
+        await self.session.flush()  # populate dataset.id for child FKs
+        return dataset
+
+    async def add_columns(
+        self,
+        *,
+        dataset_id: UUID,
+        organization_id: UUID,
+        columns: Sequence[DatasetColumnSpec],
+    ) -> list[DatasetColumn]:
+        rows = [
+            DatasetColumn(
+                dataset_id=dataset_id,
+                organization_id=organization_id,
+                name=c.name,
+                key=c.key,
+                data_type=c.data_type,
+                position=c.position,
+                nullable=c.nullable,
+                semantic_role=c.semantic_role,
+            )
+            for c in columns
+        ]
+        self.session.add_all(rows)
+        await self.session.flush()
+        return rows
+
+    async def bulk_insert_rows(
+        self,
+        *,
+        dataset_id: UUID,
+        organization_id: UUID,
+        rows: Sequence[DatasetRowData],
+        start_index: int = 0,
+    ) -> int:
+        """Insert all rows in ONE executemany. `row_index` is assigned by position
+        within this call (start_index + offset). Returns the number inserted."""
+        payloads = [
+            {
+                "dataset_id": dataset_id,
+                "organization_id": organization_id,
+                "row_index": start_index + offset,
+                "data": dict(data),
+            }
+            for offset, data in enumerate(rows)
+        ]
+        if not payloads:
+            return 0
+        await self.session.execute(insert(DatasetRow), payloads)
+        return len(payloads)
+
+    async def get_dataset(self, dataset_id: UUID) -> Dataset | None:
+        return await self.session.get(Dataset, dataset_id)
+
+    async def list_datasets(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[Dataset]:
+        """Tenant-scoped, newest-first. Explicit organization_id filter (NOT RLS)
+        and excludes soft-deleted rows when active_only."""
+        stmt = select(Dataset).where(Dataset.organization_id == organization_id)
+        if active_only:
+            stmt = stmt.where(Dataset.deleted_at.is_(None))
+        stmt = stmt.order_by(Dataset.created_at.desc(), Dataset.id.desc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_columns(self, dataset_id: UUID) -> list[DatasetColumn]:
+        stmt = (
+            select(DatasetColumn)
+            .where(DatasetColumn.dataset_id == dataset_id)
+            .where(DatasetColumn.deleted_at.is_(None))
+            .order_by(DatasetColumn.position.asc(), DatasetColumn.id.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def count_rows(self, dataset_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(DatasetRow)
+            .where(DatasetRow.dataset_id == dataset_id)
+            .where(DatasetRow.deleted_at.is_(None))
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    async def update_row_count(self, dataset_id: UUID, n: int) -> None:
+        dataset = await self.session.get(Dataset, dataset_id)
+        if dataset is None:
+            return
+        dataset.row_count = n
+        await self.session.flush()
+
+    async def soft_delete_dataset(self, dataset_id: UUID) -> None:
+        dataset = await self.session.get(Dataset, dataset_id)
+        if dataset is None or dataset.deleted_at is not None:
+            return
+        dataset.deleted_at = datetime.now(UTC)
+        await self.session.flush()
