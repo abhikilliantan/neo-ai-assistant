@@ -305,4 +305,6 @@ async def test_default_agent_never_gets_tenant_workflows(db_app, app_session_fac
         "echo",
         "search_memory",
         "search_documents",
-    }  # read-only, no workflows at all
+        "list_datasets",
+        "query_dataset",
+    }  # read-only (incl. 1c dataset tools), no workflows at all

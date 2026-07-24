@@ -376,6 +376,8 @@ async def test_chat_e2e_search_memory_surfaces_content_and_stays_ephemeral(
         "echo",
         "search_memory",
         "search_documents",
+        "list_datasets",
+        "query_dataset",
     }
 
 

@@ -27,9 +27,10 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner, agent_for_request
-from app.ai.tools import build_streaming_request_tool_registry
+from app.ai.tools import DatasetSessionFactory, build_streaming_request_tool_registry
 from app.ai.tools.search_documents import DocumentRepoFactory
 from app.ai.tools.search_memory import MemoryRepoFactory
 from app.ai.workflows.registry import WorkflowRegistry
@@ -400,6 +401,11 @@ async def chat(
             user_id=user.id,
             workflow_registry=req_workflow_registry,
             workflow_client=req_workflow_client,
+            # 1d: dataset tools (query_dataset/list_datasets) run on the
+            # NON-streaming /chat only — /chat/stream tools are deferred.
+            dataset_session_factory=_make_streaming_dataset_session_factory(
+                db, tenant_id=tenant_id
+            ),
         )
         specs = request_registry.specs()
         if specs:
@@ -499,6 +505,25 @@ def _make_streaming_document_repo_factory(db: Database, *, tenant_id: UUID) -> D
         async with db.sessionmaker() as session, session.begin():
             await set_tenant_guc(session, tenant_id)
             yield DocumentRepository(session)
+
+    return _factory
+
+
+def _make_streaming_dataset_session_factory(
+    db: Database, *, tenant_id: UUID
+) -> DatasetSessionFactory:
+    """Dataset twin of the memory/document factories: opens a SHORT-lived tenant
+    session per query_dataset/list_datasets call (set GUC → query → close), so no
+    DB connection is pinned across the provider call. Yields the SESSION itself —
+    the 1c query service builds its own repo and runs raw SQLAlchemy expressions,
+    so it needs the session, not a repo.
+    """
+
+    @asynccontextmanager
+    async def _factory() -> AsyncIterator[AsyncSession]:
+        async with db.sessionmaker() as session, session.begin():
+            await set_tenant_guc(session, tenant_id)
+            yield session
 
     return _factory
 

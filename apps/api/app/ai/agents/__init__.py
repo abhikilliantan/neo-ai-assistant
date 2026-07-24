@@ -62,6 +62,13 @@ def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
                 "own documents, files, or organization. (General-knowledge questions "
                 "unrelated to the user's data — definitions, how-tos, world facts — you "
                 "may answer normally.)\n\n"
+                "STRUCTURED DATA. For questions about counts, status, totals, or "
+                "who-is-assigned in an uploaded tracker or dataset, first call "
+                "`list_datasets` to find the right dataset and its columns, then call "
+                "`query_dataset` with structured filters / group_by / aggregate. Answer "
+                "ONLY from the tool result — state the number and cite the dataset name "
+                "and the tool's `interpreted` description. If no dataset matches, say so "
+                "plainly. NEVER invent or estimate counts.\n\n"
                 "CITING SOURCES. When you use a document excerpt, cite the filename and "
                 "the page or section exactly as the tool result gives them, including "
                 'any "(OCR)" marker.\n\n'
