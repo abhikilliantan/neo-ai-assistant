@@ -28,6 +28,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from app.ai.tools.dataset_tools import (
+    DatasetSessionFactory,
+    ListDatasetsTool,
+    QueryDatasetTool,
+)
 from app.ai.tools.echo import EchoTool
 from app.ai.tools.registry import ToolRegistry
 from app.ai.tools.search_documents import DocumentRepoFactory, SearchDocumentsTool
@@ -57,7 +62,9 @@ def _stateless_tools() -> list[Tool]:
 # search_documents (8d) is READ-ONLY — a lookup with no side effect — so it
 # reaches the DEFAULT agent, unlike workflows (which are the side-effecting set
 # gated behind 7d's consent boundary).
-READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({"echo", "search_memory", "search_documents"})
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
+    {"echo", "search_memory", "search_documents", "list_datasets", "query_dataset"}
+)
 
 
 def _assert_all_tools_classified(
@@ -155,6 +162,7 @@ def build_streaming_request_tool_registry(
     user_id: UUID,
     workflow_registry: WorkflowRegistry,
     workflow_client: WorkflowClient,
+    dataset_session_factory: DatasetSessionFactory | None = None,
 ) -> ToolRegistry:
     """Per-request registry for BOTH /chat and /chat/stream: baseline + tools
     bound to a SHORT-per-call session factory rather than a live request
@@ -194,6 +202,20 @@ def build_streaming_request_tool_registry(
             organization_id=organization_id,
         )
     )
+    # 1c: structured-dataset tools — tenant-scoped, bound to a short-per-call
+    # session factory. Registered only when the caller supplies the factory;
+    # chat endpoints wire it in 1d, so live chat is unaffected until then.
+    if dataset_session_factory is not None:
+        registry.register(
+            ListDatasetsTool(
+                session_factory=dataset_session_factory, organization_id=organization_id
+            )
+        )
+        registry.register(
+            QueryDatasetTool(
+                session_factory=dataset_session_factory, organization_id=organization_id
+            )
+        )
     if settings.workflows_enabled:
         _merge_workflow_tools(registry, workflow_registry, workflow_client)
     # 7d: every tool that reaches the model must be classified (read-only or
@@ -204,9 +226,12 @@ def build_streaming_request_tool_registry(
 
 __all__ = [
     "READ_ONLY_TOOL_NAMES",
+    "DatasetSessionFactory",
     "DocumentRepoFactory",
     "EchoTool",
+    "ListDatasetsTool",
     "MemoryRepoFactory",
+    "QueryDatasetTool",
     "SearchDocumentsTool",
     "SearchMemoryTool",
     "ToolRegistry",

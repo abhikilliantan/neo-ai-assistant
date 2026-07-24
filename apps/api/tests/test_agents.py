@@ -118,8 +118,15 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     assert "NO INVENTED METRICS" in assistant.system_prompt
     assert "I don't have that information" in assistant.system_prompt
     # 7d: default agent is READ-ONLY now — no None, no workflow. 8d added
-    # search_documents (read-only), sorted into the read-only set.
-    assert assistant.tool_names == ["echo", "search_documents", "search_memory"]
+    # search_documents; 1c added list_datasets + query_dataset (all read-only,
+    # sorted into the read-only set).
+    assert assistant.tool_names == [
+        "echo",
+        "list_datasets",
+        "query_dataset",
+        "search_documents",
+        "search_memory",
+    ]
     assert "create_task" not in (assistant.tool_names or [])
 
     # 6h: recall persona exercises BOTH persona injection and tool subset.
@@ -132,7 +139,14 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     # 7d: operator owns workflows — read-only tools PLUS every workflow name.
     operator = registry.get("operator")
     assert operator is not None
-    assert operator.tool_names == ["echo", "search_documents", "search_memory", "create_task"]
+    assert operator.tool_names == [
+        "echo",
+        "list_datasets",
+        "query_dataset",
+        "search_documents",
+        "search_memory",
+        "create_task",
+    ]
     assert operator.system_prompt.startswith("You are Neo in operator mode.")
     # Its description reads like a consent prompt (shown in the picker).
     assert "actions" in operator.description.lower()
