@@ -10,9 +10,23 @@ import { http } from "@/services/http";
 import { clearAndRedirect, refreshOnce } from "@/services/session-refresh";
 import { useSessionStore } from "@/store/session";
 
-// Non-streaming fallback — untouched from phase 3a.
-export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
-  const { data } = await http.post<ChatResponse>("/api/v1/chat", { messages });
+// Non-streaming POST /chat. This is the path that runs the tool loop
+// (query_dataset / list_datasets), so the chat UI routes through it until
+// streaming+tools lands. Body is built dynamically so `conversation_id` /
+// `agent` are OMITTED when unset — same wire discipline as streamChat.
+export async function sendChat(
+  messages: ChatMessage[],
+  opts: { conversationId?: string; agent?: string; signal?: AbortSignal } = {},
+): Promise<ChatResponse> {
+  const payload: Record<string, unknown> = { messages };
+  if (opts.conversationId) payload.conversation_id = opts.conversationId;
+  if (opts.agent) payload.agent = opts.agent;
+  const { data } = await http.post<ChatResponse>("/api/v1/chat", payload, {
+    signal: opts.signal,
+    // Override the client's 30s default: tool-running turns (query_dataset,
+    // list_datasets + the provider round-trips) legitimately take longer.
+    timeout: 120_000,
+  });
   return data;
 }
 
