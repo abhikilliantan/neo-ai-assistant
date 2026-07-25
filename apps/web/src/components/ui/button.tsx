@@ -3,13 +3,17 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-control text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        outline: "border border-input bg-background hover:bg-muted",
-        ghost: "hover:bg-muted",
+        // Accent gradient with the AA-safe on-accent text token. Used for the
+        // primary CTA (auth) and the send button.
+        gradient:
+          "bg-accent-grad text-on-accent font-semibold shadow-glow hover:brightness-110 hover:shadow-glow-ring",
+        outline: "border border-input bg-glass hover:bg-glass-hi",
+        ghost: "text-muted-foreground hover:bg-glass hover:text-foreground",
       },
       size: {
         default: "h-10 px-4 py-2",

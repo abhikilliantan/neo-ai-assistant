@@ -92,11 +92,11 @@ function UploadAndListCard() {
           </div>
         )}
         {upload.isError && (
-          <p className="text-sm text-red-500">{uploadErrorMessage(upload.error)}</p>
+          <p className="text-sm text-danger">{uploadErrorMessage(upload.error)}</p>
         )}
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
-        {isError && <p className="text-sm text-red-500">Failed to load documents.</p>}
+        {isError && <p className="text-sm text-danger">Failed to load documents.</p>}
         {data && data.length === 0 && !upload.isPending && (
           <div className="flex flex-col items-center gap-1 py-8 text-center">
             <FileText className="h-8 w-8 text-muted-foreground" />
@@ -227,7 +227,7 @@ function SearchCard() {
           <p className="text-sm text-muted-foreground">Searching…</p>
         )}
         {submitted !== "" && isError && (
-          <p className="text-sm text-red-500">Search failed. Please try again.</p>
+          <p className="text-sm text-danger">Search failed. Please try again.</p>
         )}
         {submitted !== "" && !isFetching && !isError && data && data.length === 0 && (
           <div className="rounded-md border bg-muted px-3 py-3 text-sm">
@@ -254,20 +254,29 @@ function SearchCard() {
 }
 
 function ResultRow({ result }: { result: DocumentSearchResult }) {
+  // Source/citation card (ADR-0001 provenance): glass-2 surface, file icon,
+  // filename + the server-rendered citation + match% + char range.
   return (
-    <li className="space-y-1 rounded-md border px-3 py-2">
+    <li className="glass-2 space-y-2 rounded-card p-3">
       {/* whitespace-pre-wrap: the parser preserves newlines in full_text; render
           them so structured passages don't collapse into one run-on paragraph. */}
-      <p className="whitespace-pre-wrap break-words text-sm">{result.text}</p>
+      <p className="whitespace-pre-wrap break-words text-sm text-foreground">{result.text}</p>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+          <FileText className="h-3 w-3" aria-hidden />
+        </span>
         <span className="font-medium text-foreground">{result.filename}</span>
-        <span>·</span>
+        <span className="text-faint">·</span>
         {/* citation is rendered VERBATIM from the API — the server owns the
             "p. 3 / pp. 2-3 / section X" logic (DocumentPosition.render). No page
             or section string is ever derived on the client. */}
-        <span>{result.citation}</span>
-        <span>·</span>
+        <span className="font-mono text-accent">{result.citation}</span>
+        <span className="text-faint">·</span>
         <span>{Math.round(result.similarity * 100)}% match</span>
+        <span className="text-faint">·</span>
+        <span className="font-mono text-faint">
+          chars {result.position.char_start}–{result.position.char_end}
+        </span>
       </div>
     </li>
   );

@@ -2,6 +2,7 @@
 
 import { LogOut, Menu } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { env } from "@/lib/env";
 import { logout as apiLogout } from "@/services/auth";
@@ -28,13 +29,16 @@ export function Topbar() {
   }
 
   return (
-    <header className="flex h-14 items-center gap-4 border-b bg-card px-4">
+    <header className="flex h-14 items-center gap-3 border-b border-glass-border bg-glass px-3 backdrop-blur-xl backdrop-saturate-150">
       <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle sidebar">
         <Menu className="h-4 w-4" />
       </Button>
-      <div className="font-semibold">{env.appName}</div>
-      <div className="ml-auto flex items-center gap-3">
-        {user && <span className="text-sm text-muted-foreground">{user.email}</span>}
+      <div className="font-semibold tracking-tight text-foreground">{env.appName}</div>
+      <div className="ml-auto flex items-center gap-2">
+        {user && (
+          <span className="hidden text-sm text-muted-foreground sm:inline">{user.email}</span>
+        )}
+        <ThemeToggle />
         <Button
           variant="ghost"
           size="sm"

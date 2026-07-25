@@ -7,13 +7,9 @@ import { cn } from "@/lib/cn";
 // withheld by design), so the frontend classifies by a known-name map. Only
 // names explicitly marked `kind: "action"` render as actions; anything else —
 // including a NEW workflow not yet listed here — falls through to the neutral
-// generic chip. That is graceful: an unknown tool is under-labelled, but it is
-// NEVER a crash and NEVER falsely presented as an action (mislabelling whether
-// an action occurred is the worst outcome, so the fallback must stay neutral).
-//
-// Labels are past tense: the "tool" frame is emitted AFTER the tool ran, so
-// nothing here is in-progress. Failure wording must make clear the action did
-// NOT happen ("Couldn't create the task" ≠ "Created a task").
+// generic chip. Mislabelling whether an action occurred is the worst outcome,
+// so the fallback stays neutral. Labels are past tense: the "tool" frame is
+// emitted AFTER the tool ran.
 type ToolKind = "action" | "read";
 
 const KNOWN_TOOLS: Record<string, { kind: ToolKind; ok: string; fail: string }> = {
@@ -22,14 +18,20 @@ const KNOWN_TOOLS: Record<string, { kind: ToolKind; ok: string; fail: string }> 
     ok: "Searched your memories",
     fail: "Couldn't search your memories",
   },
-  // Side-effecting workflow (7b). Add a workflow here to give it an action
-  // label; until then it renders as the neutral generic chip below.
+  search_documents: {
+    kind: "read",
+    ok: "Searched your documents",
+    fail: "Couldn't search your documents",
+  },
   create_task: {
     kind: "action",
     ok: "Created a task",
     fail: "Couldn't create the task",
   },
 };
+
+// Placeholder/dev tools never shown in production — "echo" is the scaffold tool.
+const HIDDEN_TOOLS = new Set(["echo"]);
 
 export function describeTool(name: string, ok: boolean): { kind: ToolKind; label: string } {
   const entry = KNOWN_TOOLS[name];
@@ -41,24 +43,39 @@ export function describeTool(name: string, ok: boolean): { kind: ToolKind; label
   return { kind: entry.kind, label: ok ? entry.ok : entry.fail };
 }
 
+/**
+ * ONE honest chip per tool per message. Hides placeholder tools (echo), drops
+ * duplicates, and resolves a same-tool contradiction (e.g. a memory search that
+ * ran twice, once failing) to a SINGLE truthful state — the last outcome — so
+ * the UI never shows two contradictory memory chips.
+ */
+export function consolidateInvocations(invocations: ToolInvocation[]): ToolInvocation[] {
+  const byName = new Map<string, ToolInvocation>();
+  for (const inv of invocations) {
+    if (HIDDEN_TOOLS.has(inv.name)) continue;
+    byName.set(inv.name, inv); // last write wins → the final state for that tool
+  }
+  return [...byName.values()];
+}
+
 export function ToolChip({ invocation }: { invocation: ToolInvocation }) {
   const { name, ok } = invocation;
   const { kind, label } = describeTool(name, ok);
   const isAction = kind === "action";
-  // Failure is failure (AlertTriangle) regardless of kind. On success, actions
-  // use Zap so the action/lookup distinction survives without colour; reads
-  // keep Check. Read-only chips are visually identical to before.
+  // One honest visual state: WARN on failure; INFO (accent) for a successful
+  // action; OK (success) for a successful read. Icon reinforces state without
+  // relying on colour alone.
   const Icon = !ok ? AlertTriangle : isAction ? Zap : Check;
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
-        "text-[10px] uppercase tracking-wide",
+        "font-mono text-[10px] uppercase tracking-wide",
         !ok
-          ? "border-amber-500/40 bg-amber-500/10 text-amber-700"
+          ? "border-warn/40 bg-warn/15 text-warn"
           : isAction
-            ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-700"
-            : "bg-muted text-muted-foreground",
+            ? "border-accent/40 bg-accent/15 text-accent"
+            : "border-success/40 bg-success/15 text-success",
       )}
       aria-label={label}
     >

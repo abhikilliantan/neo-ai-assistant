@@ -80,6 +80,7 @@ export type ChatRequest = {
 export type ToolInvocation = { name: string; ok: boolean };
 
 export type ChatResponse = {
+  conversation_id: string;
   message: ChatMessage;
   model: string;
   usage: ChatUsage | null;
