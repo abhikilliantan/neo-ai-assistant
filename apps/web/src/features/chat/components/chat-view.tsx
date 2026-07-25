@@ -1,19 +1,23 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Mic, Paperclip, Send, Sparkles, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Agent, ChatMessage, ToolInvocation } from "@neo/shared-types";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
 import { listAgents } from "@/services/agents";
-import { streamChat } from "@/services/chat";
+// TODO: restore streaming once streaming+tools is wired. `streamChat` is kept
+// in services/chat.ts and returns here then; the chat UI routes through the
+// non-streaming sendChat for now because that's the path the tool loop
+// (query_dataset / list_datasets) runs on.
+import { sendChat } from "@/services/chat";
 import { getConversation } from "@/services/conversations";
 import { ConversationSidebar } from "@/features/chat/components/conversation-sidebar";
-import { ToolChip } from "@/features/chat/components/tool-chip";
+import { ToolChip, consolidateInvocations } from "@/features/chat/components/tool-chip";
 
 // Session-only extension of shared-types ChatMessage. Both `toolInvocations`
 // (6e-1) and `agent` (6i-1) are LIVE UI state — populated from SSE frames
@@ -116,71 +120,67 @@ export function ChatView() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    void streamChat(requestHistory, {
-      signal: controller.signal,
-      conversationId: activeConversationId ?? undefined,
-      // Omit `agent` on the default so the wire is byte-identical to pre-6h;
-      // send the explicit name otherwise so the backend resolves it directly.
-      agent: selectedAgent !== DEFAULT_AGENT.name ? selectedAgent : undefined,
-      onMeta: ({ conversation_id, agent }) => {
+    // Non-streaming path: the tool loop runs server-side and we get the final
+    // message back in one response (content + tool_invocations + agent). The
+    // pending assistant bubble shows "Thinking…" until it resolves.
+    void (async () => {
+      try {
+        const res = await sendChat(requestHistory, {
+          signal: controller.signal,
+          conversationId: activeConversationId ?? undefined,
+          // Omit `agent` on the default so the wire is byte-identical to pre-6h;
+          // send the explicit name otherwise so the backend resolves it directly.
+          agent: selectedAgent !== DEFAULT_AGENT.name ? selectedAgent : undefined,
+        });
         // First message in a brand-new conversation: adopt the server-assigned
         // id so subsequent sends thread into the same conversation.
-        setActiveConversationId((prev) => prev ?? conversation_id);
-        // Meta arrives BEFORE the first delta, so tagging the pending
-        // assistant message here makes the label visible from stream start.
+        setActiveConversationId((prev) => prev ?? res.conversation_id);
+        // Replace the pending assistant bubble with the final answer, carrying
+        // the tool invocations + resolved agent for the chip / label.
         setMessages((prev) => {
-          const next = prev.slice();
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = { ...last, agent };
-          }
-          return next;
-        });
-      },
-      onDelta: (chunk) =>
-        setMessages((prev) => {
-          const next = prev.slice();
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = { ...last, content: last.content + chunk };
-          }
-          return next;
-        }),
-      onTool: ({ tool_name, tool_ok }) =>
-        setMessages((prev) => {
-          // Same immutable-update pattern as onDelta — append the invocation
-          // to the CURRENT in-flight assistant message's toolInvocations.
           const next = prev.slice();
           const last = next[next.length - 1];
           if (last?.role === "assistant") {
             next[next.length - 1] = {
-              ...last,
-              toolInvocations: [...(last.toolInvocations ?? []), { name: tool_name, ok: tool_ok }],
+              role: "assistant",
+              content: res.message.content,
+              toolInvocations: res.tool_invocations,
+              agent: res.agent,
             };
           }
           return next;
-        }),
-      onDone: () => {
+        });
         setStreaming(false);
         abortRef.current = null;
         // Refresh sidebar so a new conversation appears / title fills in / row bumps to top.
         void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      },
-      onError: (err) => {
-        setError(err.message || "Something went wrong.");
+      } catch (e) {
+        // Aborted (unmount / new chat / conversation switch): drop silently, but
+        // still remove the empty pending assistant bubble so it can't linger in
+        // the list and get re-sent as empty history on the next turn.
+        if (controller.signal.aborted) {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            return last?.role === "assistant" && last.content === "" ? prev.slice(0, -1) : prev;
+          });
+          return;
+        }
+        setError((e as Error).message || "Something went wrong.");
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           return last?.role === "assistant" ? prev.slice(0, -1) : prev;
         });
         setStreaming(false);
         abortRef.current = null;
-      },
-    });
+      }
+    })();
   }
 
   const showEmptyState = messages.length === 0 && !streaming && !loadingHistory;
 
   return (
+    // fixed-sidebar layout (from the earlier layout fix): min-h-0 chain keeps ONLY
+    // the message thread scrolling; the composer stays pinned.
     <div className="flex h-full gap-4">
       <ConversationSidebar
         activeConversationId={activeConversationId}
@@ -193,17 +193,14 @@ export function ChatView() {
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-4">
-        {/* min-h-0 bounds the Card to the available column height so ONLY its
-            inner div scrolls; without it the message list grows the column and
-            pushes the composer below the viewport. */}
-        <Card className="min-h-0 flex-1 overflow-hidden">
-          <div ref={scrollRef} className="h-full overflow-auto p-4">
+        <div className="glass min-h-0 flex-1 overflow-hidden rounded-card shadow-glow">
+          <div ref={scrollRef} className="h-full overflow-auto p-4 md:p-6">
             {loadingHistory ? (
               <p className="text-sm text-muted-foreground">Loading conversation…</p>
             ) : showEmptyState ? (
-              <p className="text-sm text-muted-foreground">Start a conversation.</p>
+              <EmptyState />
             ) : (
-              <ul className="space-y-3">
+              <ul className="mx-auto flex max-w-3xl flex-col gap-5">
                 {messages.map((m, i) => (
                   <MessageBubble
                     key={i}
@@ -222,59 +219,111 @@ export function ChatView() {
               </ul>
             )}
           </div>
-        </Card>
-
-        {error && (
-          <p role="alert" className="text-sm text-red-500">
-            {error}
-          </p>
-        )}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor="agent-picker" className="text-xs text-muted-foreground">
-            Agent
-          </label>
-          <select
-            id="agent-picker"
-            value={selectedAgent}
-            onChange={(e) => setSelectedAgent(e.target.value)}
-            // Locked during streaming — switching mid-stream would make the
-            // meta.agent label ambiguous about which agent produced the text
-            // on screen. Also disabled while loading historical messages.
-            disabled={streaming || loadingHistory}
-            className={cn(
-              "rounded-md border bg-background px-2 py-1 text-sm",
-              "focus:outline-none focus:ring-2 focus:ring-ring",
-              "disabled:cursor-not-allowed disabled:opacity-50",
-            )}
-          >
-            {agents.map((a) => (
-              <option key={a.name} value={a.name}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-          {/* 7e: own full-width line so the operator agent's consent text
-              (now doing real permission work) reads cleanly, not cramped
-              beside the picker. */}
-          <span className="w-full text-xs text-muted-foreground">
-            {selectedAgentMeta.description}
-          </span>
         </div>
 
-        <form className="flex gap-2" onSubmit={onSend}>
-          <Input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Ask anything…"
-            aria-label="Message"
-            disabled={streaming || loadingHistory}
-          />
-          <Button type="submit" disabled={streaming || loadingHistory || draft.trim() === ""}>
-            Send
-          </Button>
-        </form>
+        {/* One honest status area for the whole composer. */}
+        {error ? (
+          <p
+            role="alert"
+            className="inline-flex w-fit items-center gap-1.5 rounded-control border border-danger/40 bg-danger/15 px-3 py-1.5 font-mono text-xs uppercase tracking-wide text-danger"
+          >
+            {error}
+          </p>
+        ) : streaming ? (
+          <p className="inline-flex w-fit items-center gap-2 rounded-control border border-accent/40 bg-accent/15 px-3 py-1.5 font-mono text-xs uppercase tracking-wide text-accent">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />
+            Neo is responding
+          </p>
+        ) : null}
+
+        <div className="glass-2 rounded-card p-3 shadow-glow">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <label
+              htmlFor="agent-picker"
+              className="font-mono text-[10px] uppercase tracking-wide text-faint"
+            >
+              Agent
+            </label>
+            <select
+              id="agent-picker"
+              value={selectedAgent}
+              onChange={(e) => setSelectedAgent(e.target.value)}
+              // Locked during streaming — switching mid-stream would make the
+              // meta.agent label ambiguous about which agent produced the text.
+              disabled={streaming || loadingHistory}
+              className={cn(
+                "rounded-control border border-input bg-glass px-2 py-1 text-sm text-foreground",
+                "focus:outline-none focus:ring-2 focus:ring-accent/40",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+              )}
+            >
+              {agents.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <span className="w-full text-xs text-muted-foreground sm:w-auto sm:flex-1 sm:truncate">
+              {selectedAgentMeta.description}
+            </span>
+          </div>
+
+          <form className="flex items-center gap-2" onSubmit={onSend}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled
+              title="Attachments (coming soon)"
+              aria-label="Attach a file (coming soon)"
+            >
+              <Paperclip className="h-4 w-4" />
+            </Button>
+            <Input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Ask anything…"
+              aria-label="Message"
+              disabled={streaming || loadingHistory}
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled
+              title="Voice input (coming soon)"
+              aria-label="Voice input (coming soon)"
+            >
+              <Mic className="h-4 w-4" />
+            </Button>
+            <Button
+              type="submit"
+              variant="gradient"
+              size="icon"
+              disabled={streaming || loadingHistory || draft.trim() === ""}
+              aria-label="Send message"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-card bg-accent-grad shadow-glow">
+        <Sparkles className="h-6 w-6 text-on-accent" aria-hidden />
+      </span>
+      <p className="text-sm font-medium text-foreground">Start a conversation</p>
+      <p className="max-w-sm text-sm text-muted-foreground">
+        Ask about your documents, your saved context, or anything else. Neo answers from what it can
+        actually find.
+      </p>
     </div>
   );
 }
@@ -285,38 +334,43 @@ export function ChatView() {
 // react-markdown is markdown-only by default (no rehype-raw, no
 // allowDangerousHtml), so raw HTML in model output is escaped, not rendered.
 const MARKDOWN_COMPONENTS: Components = {
-  p: (props) => <p className="mb-2 last:mb-0" {...props} />,
-  strong: (props) => <strong className="font-semibold" {...props} />,
+  p: (props) => <p className="mb-2 leading-relaxed last:mb-0" {...props} />,
+  strong: (props) => <strong className="font-semibold text-foreground" {...props} />,
   em: (props) => <em className="italic" {...props} />,
   ul: (props) => <ul className="mb-2 list-disc pl-5 last:mb-0" {...props} />,
   ol: (props) => <ol className="mb-2 list-decimal pl-5 last:mb-0" {...props} />,
   li: (props) => <li className="mb-0.5" {...props} />,
-  h1: (props) => <h1 className="mb-2 mt-1 text-base font-semibold" {...props} />,
-  h2: (props) => <h2 className="mb-2 mt-1 text-sm font-semibold" {...props} />,
-  h3: (props) => <h3 className="mb-1 mt-1 text-sm font-semibold" {...props} />,
+  h1: (props) => <h1 className="mb-2 mt-1 text-base font-semibold text-foreground" {...props} />,
+  h2: (props) => <h2 className="mb-2 mt-1 text-sm font-semibold text-foreground" {...props} />,
+  h3: (props) => <h3 className="mb-1 mt-1 text-sm font-semibold text-foreground" {...props} />,
   blockquote: (props) => (
-    <blockquote className="mb-2 border-l-2 border-muted-foreground/40 pl-3 italic" {...props} />
+    <blockquote
+      className="mb-2 border-l-2 border-accent/40 pl-3 italic text-muted-foreground"
+      {...props}
+    />
   ),
   a: ({ href, children, ...rest }) => (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="underline underline-offset-2"
+      className="text-accent underline underline-offset-2 hover:brightness-110"
       {...rest}
     >
       {children}
     </a>
   ),
-  // Inline vs. block code: react-markdown renders inline `code` bare and
-  // fenced blocks as <pre><code>…</code></pre>. Style each layer where it
-  // sits — `pre` gets the block chrome, `code` inside `pre` is transparent.
+  // Inline citation pills: inline `code` (e.g. a filename or `p. 3`) renders as an
+  // accent-tinted mono pill. Fenced blocks keep the block chrome.
   code: (props) => (
-    <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[0.85em]" {...props} />
+    <code
+      className="rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[0.8em] text-accent"
+      {...props}
+    />
   ),
   pre: (props) => (
     <pre
-      className="mb-2 overflow-x-auto rounded-md bg-background/60 p-2 text-xs [&_code]:bg-transparent [&_code]:p-0"
+      className="mb-2 overflow-x-auto rounded-control border border-glass-border bg-glass p-3 text-xs [&_code]:border-0 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-foreground"
       {...props}
     />
   ),
@@ -336,42 +390,47 @@ function MessageBubble({
   pending?: boolean;
 }) {
   const isUser = role === "user";
-  const chips = !isUser && toolInvocations && toolInvocations.length > 0;
-  // Agent label is LIVE-only (set by meta frame during stream). Hidden for
-  // the default agent — the picker already shows "assistant" and repeating
-  // it on every bubble is noise. Non-default names ("recall", …) still show.
+  const chips = !isUser ? consolidateInvocations(toolInvocations ?? []) : [];
+  // Agent label is LIVE-only (set by meta frame during stream). Hidden for the
+  // default agent — the picker already shows "assistant".
   const agentLabel = !isUser && agent && agent !== DEFAULT_AGENT.name;
+
+  if (isUser) {
+    return (
+      <li className="flex justify-end gap-3">
+        <div className="glass-hi max-w-[80%] whitespace-pre-wrap rounded-card px-4 py-2.5 text-sm text-foreground">
+          {content}
+        </div>
+        <Avatar kind="user" />
+      </li>
+    );
+  }
+
   return (
-    <li className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      <div className="flex max-w-[75%] flex-col items-start gap-1">
+    <li className="flex justify-start gap-3">
+      <Avatar kind="neo" />
+      <div className="flex min-w-0 max-w-[80%] flex-col items-start gap-1.5">
         {agentLabel && (
           <span
-            className="text-[10px] uppercase tracking-wide text-muted-foreground"
+            className="font-mono text-[10px] uppercase tracking-wide text-faint"
             aria-label={`Agent: ${agent}`}
           >
             {agent}
           </span>
         )}
-        {chips && (
-          <div className="flex flex-wrap gap-1" aria-label="Tools Neo used">
-            {toolInvocations.map((t, i) => (
+        {chips.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" aria-label="Tools Neo used">
+            {chips.map((t, i) => (
               <ToolChip key={i} invocation={t} />
             ))}
           </div>
         )}
-        <div
-          className={cn(
-            "rounded-lg px-3 py-2 text-sm",
-            // User text is literal — preserve whitespace, no markdown.
-            isUser && "whitespace-pre-wrap bg-primary text-primary-foreground",
-            !isUser && "bg-muted",
-            pending && "text-muted-foreground",
-          )}
-        >
+        <div className={cn("text-sm text-foreground", pending && "text-muted-foreground")}>
           {pending ? (
-            "Thinking…"
-          ) : isUser ? (
-            content
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />
+              Thinking…
+            </span>
           ) : (
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
               {content}
@@ -380,5 +439,26 @@ function MessageBubble({
         </div>
       </div>
     </li>
+  );
+}
+
+function Avatar({ kind }: { kind: "user" | "neo" }) {
+  if (kind === "neo") {
+    return (
+      <span
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-grad shadow-glow"
+        aria-hidden
+      >
+        <Sparkles className="h-4 w-4 text-on-accent" />
+      </span>
+    );
+  }
+  return (
+    <span
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-glass-border bg-glass-hi text-muted-foreground"
+      aria-hidden
+    >
+      <User className="h-4 w-4" />
+    </span>
   );
 }

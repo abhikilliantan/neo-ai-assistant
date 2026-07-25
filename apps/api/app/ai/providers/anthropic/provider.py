@@ -29,12 +29,15 @@ from app.application.ports.chat import (
     ToolExecutor,
 )
 from app.application.ports.tools import ToolCall, ToolInvocation, ToolResult
+from app.infrastructure.logging import get_logger
 from app.shared.exceptions.ai import (
     ProviderAPIError,
     ProviderAuthError,
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
+
+_log = get_logger("provider.anthropic")
 
 _SDK_EXCEPTIONS: tuple[type[BaseException], ...] = (
     AuthenticationError,
@@ -89,11 +92,7 @@ class AnthropicProvider:
         there are no system messages, avoiding the SDK's NOT_GIVEN sentinel.
         """
         system_parts = [m.content for m in messages if m.role == "system"]
-        api_messages = [
-            {"role": m.role, "content": m.content}
-            for m in messages
-            if m.role in ("user", "assistant")
-        ]
+        api_messages = self._sanitize_messages(messages)
         kwargs: dict[str, Any] = {
             "model": model or self._model,
             "max_tokens": self._max_tokens,
@@ -107,8 +106,46 @@ class AnthropicProvider:
         return kwargs
 
     @staticmethod
+    def _sanitize_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+        """Build the Anthropic messages array, guaranteeing what the API requires:
+        non-empty content and roles that alternate user/assistant starting with
+        user. A prior failed/aborted turn can leave an EMPTY assistant message in
+        the history — sending it (or the bad role alternation left after dropping
+        it) is a hard 400 that then repeats on every subsequent turn because the
+        bad history is re-sent each time.
+        """
+        out: list[dict[str, Any]] = []
+        for m in messages:
+            if m.role not in ("user", "assistant"):
+                continue  # system extracted separately into the top-level param
+            content = m.content
+            if not content or not content.strip():
+                continue  # drop empty / whitespace-only turns
+            if out and out[-1]["role"] == m.role:
+                # Merge consecutive same-role turns (e.g. two users left adjacent
+                # after dropping an empty assistant) — Anthropic rejects
+                # non-alternating roles.
+                out[-1]["content"] = f"{out[-1]['content']}\n\n{content}"
+            else:
+                out.append({"role": m.role, "content": content})
+        # Anthropic requires the first message to be 'user'.
+        while out and out[0]["role"] != "user":
+            out.pop(0)
+        return out
+
+    @staticmethod
     def _translate(exc: BaseException) -> BaseException:
         """Map an Anthropic SDK exception to the corresponding domain exception."""
+        if isinstance(exc, APIStatusError):
+            # Surface the REAL upstream reason — the /chat handler collapses this
+            # to a generic 502, so without this log the exact 400 body (e.g. which
+            # message/block Anthropic rejected) is invisible.
+            _log.warning(
+                "provider.anthropic.api_error",
+                status_code=getattr(exc, "status_code", None),
+                request_id=getattr(exc, "request_id", None),
+                body=getattr(exc, "body", None),
+            )
         if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
             return ProviderAuthError(str(exc))
         if isinstance(exc, RateLimitError):

@@ -461,6 +461,33 @@ async def test_anthropic_provider_never_sends_empty_tool_result_content() -> Non
 
 
 @pytest.mark.asyncio
+async def test_anthropic_provider_sanitizes_empty_and_nonalternating_history() -> None:
+    """Regression (Anthropic 400): an EMPTY assistant message in the history (left
+    by a prior failed/aborted turn) must not reach Anthropic — empty content 400s,
+    and the bad history re-sends every turn. The sanitizer drops it, drops
+    whitespace-only turns, and merges the now-adjacent same-role turns so roles
+    still alternate starting with user.
+    """
+    create = AsyncMock(return_value=_fake_text_response(text="hi"))
+    provider = _anthropic_provider(create)
+
+    messages = [
+        ChatMessage(role="user", content="first"),
+        ChatMessage(role="assistant", content=""),  # aborted-turn placeholder -> dropped
+        ChatMessage(role="user", content="   "),  # whitespace-only -> dropped
+        ChatMessage(role="user", content="second"),  # now adjacent to "first" -> merged
+    ]
+    completion = await provider.complete(messages=messages)
+
+    sent = create.await_args.kwargs["messages"]
+    # No empty content, roles alternate (single merged user turn here), starts user.
+    assert sent == [{"role": "user", "content": "first\n\nsecond"}]
+    assert all(m["content"].strip() for m in sent)
+    assert sent[0]["role"] == "user"
+    assert completion.content == "hi"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_provider_drops_empty_text_block_from_assistant_replay() -> None:
     """Anthropic also 400s on empty text blocks. If Claude emits an empty text
     block alongside a tool_use, the replayed assistant turn must drop it and keep
