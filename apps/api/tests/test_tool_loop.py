@@ -38,7 +38,7 @@ from app.application.ports.chat import (
     ChatStreamEvent,
     ToolExecutor,
 )
-from app.application.ports.tools import ToolCall, ToolResult
+from app.application.ports.tools import ToolCall, ToolInvocation, ToolResult
 
 # --- helpers -----------------------------------------------------------------
 
@@ -421,6 +421,75 @@ async def test_anthropic_provider_maps_is_error_true_onto_tool_result_block() ->
     tool_result = create.await_args_list[1].kwargs["messages"][2]["content"][0]
     assert tool_result["is_error"] is True
     assert tool_result["content"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_never_sends_empty_tool_result_content() -> None:
+    """Regression (Anthropic 400): a tool returning "" — here real echo called
+    with text="" — must NOT produce an empty tool_result block. Anthropic rejects
+    empty content with a 400, breaking the very next SDK call. The loop replaces
+    it with a non-empty fallback and still reaches a grounded final answer.
+    """
+    from app.ai.tools.echo import EchoTool
+    from app.ai.tools.registry import ToolRegistry
+
+    responses = [
+        _fake_tool_use_response(call_id="toolu_e", tool_name="echo", arguments={"text": ""}),
+        _fake_text_response(text="nothing came back"),
+    ]
+    create = AsyncMock(side_effect=responses)
+    provider = _anthropic_provider(create)
+
+    # Real registry + echo so echo("") genuinely flows "" through registry.execute.
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+
+    completion = await provider.complete(
+        messages=[ChatMessage(role="user", content="echo empty")],
+        tools=[{"name": "echo", "description": "x", "input_schema": {}}],
+        tool_executor=registry.execute,
+    )
+
+    assert create.await_count == 2
+    tool_result = create.await_args_list[1].kwargs["messages"][2]["content"][0]
+    assert tool_result["type"] == "tool_result"
+    assert tool_result["content"] != ""  # the bug: this used to be ""
+    assert tool_result["content"] == "(no output)"
+    # Loop still completes with the grounded final answer + the invocation.
+    assert completion.content == "nothing came back"
+    assert completion.tool_invocations == [ToolInvocation(name="echo", ok=True)]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_drops_empty_text_block_from_assistant_replay() -> None:
+    """Anthropic also 400s on empty text blocks. If Claude emits an empty text
+    block alongside a tool_use, the replayed assistant turn must drop it and keep
+    only the tool_use block."""
+    tool_use_with_empty_text = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text=""),  # stray empty text block
+            SimpleNamespace(type="tool_use", id="toolu_t", name="echo", input={"text": "hi"}),
+        ],
+        model="claude-fake",
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        stop_reason="tool_use",
+    )
+    create = AsyncMock(side_effect=[tool_use_with_empty_text, _fake_text_response(text="done")])
+    provider = _anthropic_provider(create)
+
+    async def executor(call: ToolCall) -> ToolResult:
+        return ToolResult(tool_call_id=call.id, content="hi", is_error=False)
+
+    await provider.complete(
+        messages=[ChatMessage(role="user", content="go")],
+        tools=[{"name": "echo", "description": "x", "input_schema": {}}],
+        tool_executor=executor,
+    )
+
+    assistant_replay = create.await_args_list[1].kwargs["messages"][1]["content"]
+    # Empty text block gone; only the tool_use block remains.
+    assert all(not (b.get("type") == "text" and not b.get("text")) for b in assistant_replay)
+    assert [b["type"] for b in assistant_replay] == ["tool_use"]
 
 
 @pytest.mark.asyncio

@@ -28,7 +28,7 @@ from app.application.ports.chat import (
     ChatUsage,
     ToolExecutor,
 )
-from app.application.ports.tools import ToolCall, ToolInvocation
+from app.application.ports.tools import ToolCall, ToolInvocation, ToolResult
 from app.shared.exceptions.ai import (
     ProviderAPIError,
     ProviderAuthError,
@@ -48,6 +48,15 @@ _SDK_EXCEPTIONS: tuple[type[BaseException], ...] = (
 
 
 _DEFAULT_MAX_TOOL_ITERATIONS = 5
+
+# Anthropic rejects (HTTP 400) any content block with empty content — an empty
+# tool_result `content`, or an empty `text` block. Our tools CAN legitimately
+# produce empty output (echo with text="", a workflow returning "", or the
+# registry's error path when str(exc) is ""), and Claude can emit a stray empty
+# text block alongside a tool_use. Both would break the very next SDK call, so
+# we sanitize at THIS boundary — the single choke point every tool result and
+# replayed assistant block passes through — rather than in each tool.
+_EMPTY_TOOL_RESULT_FALLBACK = "(no output)"
 
 
 class AnthropicProvider:
@@ -151,6 +160,27 @@ class AnthropicProvider:
         dump = getattr(block, "model_dump", None)
         return dump() if callable(dump) else {"type": t or "unknown"}
 
+    @staticmethod
+    def _tool_result_block(result: ToolResult) -> dict[str, Any]:
+        """Build a tool_result block with GUARANTEED non-empty content — an empty
+        string here is a hard Anthropic 400 on the next call."""
+        tr: dict[str, Any] = {
+            "type": "tool_result",
+            "tool_use_id": result.tool_call_id,
+            "content": result.content or _EMPTY_TOOL_RESULT_FALLBACK,
+        }
+        if result.is_error:
+            tr["is_error"] = True
+        return tr
+
+    @staticmethod
+    def _assistant_content(response_content: Any) -> list[dict[str, Any]]:
+        """Serialize the assistant turn for replay, dropping empty text blocks
+        (Anthropic rejects them). A tool_use turn always keeps ≥1 tool_use block,
+        so the result is never empty."""
+        blocks = [AnthropicProvider._serialize_block(b) for b in response_content]
+        return [b for b in blocks if not (b.get("type") == "text" and not b.get("text"))]
+
     async def complete(
         self,
         *,
@@ -196,18 +226,11 @@ class AnthropicProvider:
                 )
                 result = await tool_executor(call)
                 invocations.append(ToolInvocation(name=call.name, ok=not result.is_error))
-                tr: dict[str, Any] = {
-                    "type": "tool_result",
-                    "tool_use_id": result.tool_call_id,
-                    "content": result.content,
-                }
-                if result.is_error:
-                    tr["is_error"] = True
-                tool_result_blocks.append(tr)
+                tool_result_blocks.append(self._tool_result_block(result))
 
             # Extend the conversation for the next SDK call: assistant's full
             # content list (text + tool_use), then the user turn of results.
-            assistant_content = [self._serialize_block(b) for b in response.content]
+            assistant_content = self._assistant_content(response.content)
             api_messages.append({"role": "assistant", "content": assistant_content})
             api_messages.append({"role": "user", "content": tool_result_blocks})
 
@@ -305,16 +328,9 @@ class AnthropicProvider:
                 )
                 result = await tool_executor(call)
                 yield ChatStreamEvent(type="tool", tool_name=call.name, tool_ok=not result.is_error)
-                tr: dict[str, Any] = {
-                    "type": "tool_result",
-                    "tool_use_id": result.tool_call_id,
-                    "content": result.content,
-                }
-                if result.is_error:
-                    tr["is_error"] = True
-                tool_result_blocks.append(tr)
+                tool_result_blocks.append(self._tool_result_block(result))
 
-            assistant_content = [self._serialize_block(b) for b in final.content]
+            assistant_content = self._assistant_content(final.content)
             api_messages.append({"role": "assistant", "content": assistant_content})
             api_messages.append({"role": "user", "content": tool_result_blocks})
 
