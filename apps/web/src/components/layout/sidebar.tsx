@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, LayoutDashboard, MessageSquare, Settings } from "lucide-react";
+import { Database, FileText, LayoutDashboard, MessageSquare, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useUiStore } from "@/store/ui";
 
@@ -10,6 +10,7 @@ const nav = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/datasets", label: "Datasets", icon: Database },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

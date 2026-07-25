@@ -168,6 +168,36 @@ export type Document = {
   created_at: string;
 };
 
+// --- datasets (mirrors backend /api/v1/datasets) ---
+export type DatasetColumn = {
+  name: string; // original header
+  key: string; // normalized slug used in queries
+  data_type: string; // text | number | date | boolean
+  semantic_role: string; // status | owner | priority | due_date | none
+};
+
+// GET /api/v1/datasets — one row per dataset.
+export type DatasetSummary = {
+  dataset_id: string;
+  name: string;
+  row_count: number;
+  sheet_name: string | null;
+  created_at: string;
+};
+
+// GET /api/v1/datasets/{id} — dataset + its typed columns.
+export type DatasetDetail = DatasetSummary & {
+  columns: DatasetColumn[];
+};
+
+// POST /api/v1/datasets/ingest response.
+export type DatasetIngestResponse = {
+  dataset_id: string;
+  name: string;
+  row_count: number;
+  columns: DatasetColumn[];
+};
+
 // --- document search (mirrors backend POST /api/v1/documents/search) ---
 // 8e-1 builds this transport; 8e-2 builds the UI that renders it.
 export type DocumentSearchRequest = {
