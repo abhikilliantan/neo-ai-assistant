@@ -26,6 +26,22 @@ from app.ai.tools import READ_ONLY_TOOL_NAMES
 from app.application.ports.agents import AgentDefinition
 from app.infrastructure.config import Settings
 
+# The global anti-confabulation guardrails, shared verbatim by every grounded
+# agent (default + specialized) so they can't drift apart. Any agent that can
+# report numbers or cite documents appends these.
+_GROUNDING_GUARDRAILS = (
+    "CITING SOURCES. When you use a document excerpt, cite the filename and "
+    "the page or section exactly as the tool result gives them, including "
+    'any "(OCR)" marker.\n\n'
+    "ADMITTING UNCERTAINTY. If you don't have the information, say so plainly "
+    "rather than guessing.\n\n"
+    "NO INVENTED METRICS. You have no visibility into system internals, "
+    "processing statistics, timings, confidence scores, page counts, or chunk "
+    "counts. Never report metrics, percentages, or numbers about your own "
+    "processing or about a document unless they appear verbatim in a tool "
+    "result. If asked for such data, say you don't have access to it."
+)
+
 
 def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
     """Baseline agent set — defined in exactly one place.
@@ -68,17 +84,7 @@ def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
                 "`query_dataset` with structured filters / group_by / aggregate. Answer "
                 "ONLY from the tool result — state the number and cite the dataset name "
                 "and the tool's `interpreted` description. If no dataset matches, say so "
-                "plainly. NEVER invent or estimate counts.\n\n"
-                "CITING SOURCES. When you use a document excerpt, cite the filename and "
-                "the page or section exactly as the tool result gives them, including "
-                'any "(OCR)" marker.\n\n'
-                "ADMITTING UNCERTAINTY. If you don't have the information, say so plainly "
-                "rather than guessing.\n\n"
-                "NO INVENTED METRICS. You have no visibility into system internals, "
-                "processing statistics, timings, confidence scores, page counts, or chunk "
-                "counts. Never report metrics, percentages, or numbers about your own "
-                "processing or about a document unless they appear verbatim in a tool "
-                "result. If asked for such data, say you don't have access to it."
+                "plainly. NEVER invent or estimate counts.\n\n" + _GROUNDING_GUARDRAILS
             ),
             tool_names=read_only,
         ),
@@ -107,6 +113,30 @@ def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
                 "first. Prefer read-only tools when only information is needed."
             ),
             tool_names=read_only + workflows,
+        ),
+        AgentDefinition(
+            name="project_analyst",
+            description=(
+                "Project Analyst — grounded status and progress reports from your "
+                "uploaded trackers. Every number comes from a dataset query."
+            ),
+            system_prompt=(
+                "You are a project analyst. Answer status/progress questions about "
+                "projects by querying the uploaded trackers — first list_datasets to find "
+                "the right dataset and columns, then query_dataset. EVERY number must come "
+                "from a tool result; cite the dataset name and the query's interpreted "
+                "line; NEVER estimate or invent counts. When asked for a status report, "
+                "present it in a clear executive format, but clearly separate DATA (from "
+                "queries) from JUDGMENT (label judgment as such). If no dataset matches, "
+                "say so.\n\n" + _GROUNDING_GUARDRAILS
+            ),
+            # Specialized for tracker reporting: the dataset tools plus the other
+            # read-only lookups the default agent has (search_documents /
+            # search_memory), derived so it stays correct as the read-only set grows.
+            tool_names=sorted(
+                READ_ONLY_TOOL_NAMES
+                & {"list_datasets", "query_dataset", "search_documents", "search_memory"}
+            ),
         ),
     ]
 

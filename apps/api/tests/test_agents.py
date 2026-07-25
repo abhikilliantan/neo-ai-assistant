@@ -108,8 +108,8 @@ def test_registry_duplicate_register_raises() -> None:
 def test_build_agent_registry_registers_default_assistant() -> None:
     registry = build_agent_registry(_base(), workflow_names=["create_task"])
     assert isinstance(registry, AgentRegistry)
-    # 7d adds the "operator" persona; order is [assistant, recall, operator].
-    assert registry.list_names() == ["assistant", "recall", "operator"]
+    # 7d adds "operator"; the Project Analyst agent adds "project_analyst".
+    assert registry.list_names() == ["assistant", "recall", "operator", "project_analyst"]
 
     assistant = registry.get("assistant")
     assert assistant is not None
@@ -150,6 +150,24 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     assert operator.system_prompt.startswith("You are Neo in operator mode.")
     # Its description reads like a consent prompt (shown in the picker).
     assert "actions" in operator.description.lower()
+
+    # Project Analyst: dataset tools + the other read-only lookups (NOT echo),
+    # a specialized persona, and the global grounding guardrails kept.
+    analyst = registry.get("project_analyst")
+    assert analyst is not None
+    assert analyst.tool_names == [
+        "list_datasets",
+        "query_dataset",
+        "search_documents",
+        "search_memory",
+    ]
+    assert "echo" not in (analyst.tool_names or [])
+    assert "create_task" not in (analyst.tool_names or [])
+    assert analyst.system_prompt.startswith("You are a project analyst.")
+    assert "query_dataset" in analyst.system_prompt
+    assert "separate DATA" in analyst.system_prompt  # data vs judgment
+    assert "NO INVENTED METRICS" in analyst.system_prompt  # global guardrails kept
+    assert "Project Analyst" in analyst.description
 
 
 # --- lifespan wiring: app builds with agent_registry on state ---------------
@@ -221,6 +239,6 @@ async def test_lifespan_logs_agents_line(monkeypatch: pytest.MonkeyPatch) -> Non
     async with main_mod.lifespan(app):
         pass
 
-    assert captured.get("agents") == "assistant,recall,operator"
+    assert captured.get("agents") == "assistant,recall,operator,project_analyst"
     # Sanity: existing "tools" line still carried too (no regression).
     assert "tools" in captured

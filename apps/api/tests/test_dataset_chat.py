@@ -195,6 +195,46 @@ async def test_chat_runs_dataset_tools_and_answers_with_count(db_app) -> None:  
 
 
 @pytest.mark.asyncio
+async def test_project_analyst_answers_status_via_query_dataset(db_app) -> None:  # type: ignore[no-untyped-def]
+    """The Project Analyst agent answers a status question by querying a tracker:
+    its filtered tool subset (dataset tools + read-only lookups, NOT echo) reaches
+    the provider, and the grounded count comes back."""
+    provider = _TrackerQueryingProvider()
+    db_app.state.chat_provider = provider
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        reg = await _register(c, "pa-status@example.com")
+        token = reg["access_token"]
+        await _ingest(c, token, "Q3 Tracker")
+
+        r = await c.post(
+            "/api/v1/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "messages": [{"role": "user", "content": "How many actions are still open?"}],
+                "agent": "project_analyst",
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["agent"] == "project_analyst"
+        # The agent's tool subset was enforced — dataset tools + read-only lookups
+        # reached the provider; echo (not in the analyst subset) was filtered out.
+        assert set(provider.seen_tools) == {
+            "list_datasets",
+            "query_dataset",
+            "search_documents",
+            "search_memory",
+        }
+        # Grounded: both tools ran and the count is the real query result.
+        assert body["tool_invocations"] == [
+            {"name": "list_datasets", "ok": True},
+            {"name": "query_dataset", "ok": True},
+        ]
+        assert body["message"]["content"] == "There are 2 open actions in Q3 Tracker."
+
+
+@pytest.mark.asyncio
 async def test_chat_dataset_tools_are_tenant_isolated(db_app) -> None:  # type: ignore[no-untyped-def]
     db_app.state.chat_provider = _ListOnlyProvider()
     transport = ASGITransport(app=db_app)
