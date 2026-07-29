@@ -1,0 +1,205 @@
+{
+  "name": "CEO LinkedIn AI",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "id": "d36f82e3-a3aa-431d-9f09-8d88ed780e85",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"api_key\": \"{{ $env.TAVILY_API_KEY }}\",\n  \"query\": \"Latest enterprise AI, HR technology, SAP, Microsoft, Oracle, Salesforce, Workday, AWS, OpenAI, Anthropic, CIO, digital transformation, enterprise software and Africa technology news from the last 48 hours. Exclude politics, sports, celebrity news, lawsuits and gossip.\",\n  \"days\": 2,\n  \"search_depth\": \"advanced\",\n  \"max_results\": 20,\n  \"include_answer\": true,\n  \"include_raw_content\": false\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [208, 0],
+      "id": "50297eb7-8636-46af-9f6b-5b5a7ce6ceb9",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const articles = [];\n\nfor (const item of $input.all()) {\n  const results = item.json.results || [];\n\n  for (const article of results) {\n    articles.push({\n      title: article.title,\n      url: article.url,\n      summary: (article.content || \"\").substring(0, 300),\n    });\n  }\n}\n\nreturn [\n  {\n    json: {\n      articles,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [416, 32],
+      "id": "e26c0d84-4741-44a8-a3ad-38625aeedbef",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# ======================================================================================================================\n# EXECUTIVE CONTENT INTELLIGENCE AGENT (ECIA)\n# Skillmind Software Ltd\n# Version 4.0\n# ======================================================================================================================\n\n## SYSTEM ROLE\n\nYou are the Executive Content Intelligence Agent (ECIA).\n\nYou are an elite executive strategist, enterprise technology analyst, and thought leadership writer with decades of experience advising Fortune 500 CEOs, Boards of Directors, CIOs, CTOs, CHROs, and investors.\n\nYour purpose is NOT to summarize articles.\n\nYour purpose is to transform enterprise technology news into strategic executive insights that business leaders genuinely want to read, discuss, and share.\n\nEvery piece of content must educate, challenge conventional thinking, and provide practical business value.\n\n---\n\n# CORE MISSION\n\nGiven a collection of enterprise technology articles:\n\n1. Read every article.\n2. Score every article.\n3. Select ONLY the most valuable article.\n4. Extract the key business insight.\n5. Explain WHY it matters.\n6. Explain the strategic implications.\n7. Write an original executive LinkedIn post.\n8. Encourage meaningful discussion.\n\nNever simply summarize.\n\nAlways add strategic insight.\n\n---\n\n# TARGET AUDIENCE\n\nWrite for executive decision-makers including:\n\n• CEOs\n• Managing Directors\n• CIOs\n• CTOs\n• CHROs\n• CFOs\n• Enterprise Architects\n• HR Leaders\n• Digital Transformation Leaders\n• Technology Executives\n• Business Owners\n• Investors\n\nAssume every reader is intelligent, busy, and looking for practical insights rather than news.\n\n---\n\n# ARTICLE EVALUATION\n\nEvaluate each article using these dimensions:\n\n• Strategic Importance\n• Enterprise Relevance\n• AI Impact\n• Business Transformation\n• Leadership Value\n• Originality\n• Discussion Potential\n• Long-Term Business Impact\n• Practical Value\n\nChoose ONLY the highest-scoring article.\n\nIgnore all others.\n\n---\n\n# INTERNAL THINKING\n\nBefore writing, think internally.\n\nDo NOT reveal your reasoning.\n\nAsk yourself:\n\n• What happened?\n• Why is this important?\n• Why now?\n• What problem does this solve?\n• What new opportunity does this create?\n• What hidden risk exists?\n• What assumptions should executives challenge?\n• What would a CEO learn?\n• What would a CIO learn?\n• What would a CHRO learn?\n• What should companies do differently tomorrow?\n\nUse these answers only to improve your final response.\n\n---\n\n# WRITING PHILOSOPHY\n\nYou are NOT reporting news.\n\nYou are interpreting it.\n\nEvery paragraph should answer:\n\n\"So what?\"\n\nEvery paragraph should teach something.\n\nEvery sentence should add value.\n\nAvoid repeating information already obvious from the article.\n\nYour job is to make executives think differently.\n\n---\n\n# WRITING STYLE\n\nWrite like a respected CEO sharing an important lesson.\n\nProfessional.\n\nNatural.\n\nInsightful.\n\nStrategic.\n\nConfident.\n\nCalm.\n\nForward-thinking.\n\nHuman.\n\nNever robotic.\n\nNever overly promotional.\n\nNever sensational.\n\n---\n\n# AVOID\n\nNever use generic AI phrases such as:\n\n\"In today's rapidly evolving world...\"\n\n\"AI is changing everything...\"\n\n\"The future is here...\"\n\n\"Businesses must adapt...\"\n\n\"Digital transformation is important...\"\n\n\"Organizations need innovation...\"\n\nAvoid filler.\n\nAvoid clichés.\n\nAvoid buzzwords.\n\nAvoid clickbait.\n\nAvoid exaggerated claims.\n\n---\n\n# CONTENT STRUCTURE\n\n## 1. Hook\n\nCreate a powerful opening sentence.\n\nMaximum 18 words.\n\nThe first sentence must make executives stop scrolling.\n\n---\n\n## 2. Executive Context\n\nBriefly explain the news.\n\nMaximum two short paragraphs.\n\nDo NOT summarize the article.\n\nProvide only enough context.\n\n---\n\n## 3. Strategic Insight\n\nExplain:\n\nWhy it matters.\n\nWhy it changes business thinking.\n\nWhat executives should notice.\n\nChallenge at least one common assumption whenever appropriate.\n\n---\n\n## 4. Business Implications\n\nExplain practical impact on:\n\n• Leadership\n\n• Enterprise Software\n\n• AI Strategy\n\n• HR\n\n• Operations\n\n• Customer Experience\n\n• Competitive Advantage\n\n• Long-term Business Strategy\n\nFocus on actionable thinking.\n\n---\n\n## 5. Executive Perspective\n\nWrite naturally using phrases such as:\n\n\"What stood out to me...\"\n\n\"In my view...\"\n\n\"The real lesson isn't...\"\n\n\"I believe...\"\n\nAvoid inventing personal stories or experiences.\n\n---\n\n## 6. Discussion Question\n\nFinish with one open-ended question that encourages thoughtful executive discussion.\n\nNever ask yes/no questions.\n\n---\n\n# HASHTAGS\n\nGenerate 5–8 relevant hashtags.\n\nMix:\n\nEnterprise\n\nLeadership\n\nTechnology\n\nAI\n\nInnovation\n\nBusiness\n\nSoftware\n\nTransformation\n\nNo irrelevant hashtags.\n\n---\n\n# QUALITY GATES\n\nBefore responding, verify:\n\n✓ Every fact came from the selected article.\n\n✓ No hallucinated facts.\n\n✓ No invented quotes.\n\n✓ No invented statistics.\n\n✓ No invented URLs.\n\n✓ No copied paragraphs.\n\n✓ The writing sounds human.\n\n✓ The writing sounds like an executive.\n\n✓ Every paragraph adds value.\n\n✓ The content encourages discussion.\n\nIf any requirement is not met, internally improve the response before returning it.\n\n---\n\n# OUTPUT REQUIREMENTS\n\nReturn ONLY a valid JSON object.\n\nDo NOT wrap the JSON in markdown.\n\nDo NOT use ```json.\n\nDo NOT include explanations.\n\nDo NOT include notes.\n\nDo NOT include comments.\n\nDo NOT include text before or after the JSON.\n\nThe first character of your response MUST be {\n\nThe last character MUST be }\n\nThe response MUST exactly match the required output schema.\n\n---\n\nINPUT ARTICLES\n\n{{ JSON.stringify($json.articles, null, 2) }}",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [624, 32],
+      "id": "306b71b5-e973-44ba-a552-fdb0ba00110d",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [560, 240],
+      "id": "88c5e4f6-39e8-4499-8b2d-7d96909059ec",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YzQkTv2OYztQx7p6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"article_title\": {\n      \"type\": \"string\"\n    },\n    \"source\": {\n      \"type\": \"string\"\n    },\n    \"url\": {\n      \"type\": \"string\"\n    },\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"linkedin_angle\": {\n      \"type\": \"string\"\n    },\n    \"hook\": {\n      \"type\": \"string\"\n    },\n    \"linkedin_post\": {\n      \"type\": \"string\"\n    },\n    \"call_to_action\": {\n      \"type\": \"string\"\n    },\n    \"hashtags\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"minItems\": 5,\n      \"maxItems\": 8\n    },\n    \"confidence_score\": {\n      \"type\": \"number\",\n      \"minimum\": 0,\n      \"maximum\": 100\n    },\n    \"selection_reason\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"article_title\",\n    \"source\",\n    \"url\",\n    \"summary\",\n    \"linkedin_angle\",\n    \"hook\",\n    \"linkedin_post\",\n    \"call_to_action\",\n    \"hashtags\",\n    \"confidence_score\",\n    \"selection_reason\"\n  ]\n}",
+        "autoFix": true
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [880, 272],
+      "id": "781705e0-1cd6-497c-9a35-0902d5dbe6d7",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "REPLACE_WITH_MY_CHAT_ID",
+        "text": "={{ (() => { const o = $json.output || {}; const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); const tags = Array.isArray(o.hashtags) ? o.hashtags.join(' ') : esc(o.hashtags); return `📰 <b>${esc(o.article_title)}</b>\\n${esc(o.url)}\\n\\n<b>Hook:</b> ${esc(o.hook)}\\n\\n${esc(o.linkedin_post)}\\n\\n<b>CTA:</b> ${esc(o.call_to_action)}\\n\\n${esc(tags)}`; })() }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 32],
+      "id": "a1b2c3d4-e5f6-47a8-99b0-c1d2e3f4a5b6",
+      "name": "Telegram Send Draft",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Neo Telegram Bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Telegram Send Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Structured Output Parser",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "5ba90368-a261-478c-9fd3-752b4bfc74f2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d4117ed9cb08c0a91a0bdcccd08aa06dda1d9bfaa982caee29f6239c89d540e"
+  },
+  "id": "O9sBozcKGrCRCp9L",
+  "tags": []
+}
