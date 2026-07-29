@@ -19,7 +19,7 @@ from app.shared.exceptions.auth import (
     RegistrationClosedError,
 )
 from app.shared.exceptions.common import BadRequestError, NotFoundError
-from app.shared.exceptions.datasets import DatasetIngestError
+from app.shared.exceptions.datasets import DatasetIngestError, DuplicateDatasetNameError
 from app.shared.exceptions.documents import (
     DocumentParseError,
     DocumentTooLargeError,
@@ -105,6 +105,23 @@ async def _email_taken_handler(_: Request, exc: Exception) -> JSONResponse:
         _error_body("email_already_registered", "email is already registered"),
         status_code=status.HTTP_409_CONFLICT,
     )
+
+
+async def _duplicate_dataset_name_handler(_: Request, exc: Exception) -> JSONResponse:
+    # 409 carrying the existing dataset's id/name in `details` so the UI can prompt
+    # replace-or-create instead of silently making a duplicate.
+    assert isinstance(exc, DuplicateDatasetNameError)
+    body = {
+        "error": {
+            "code": "duplicate_dataset_name",
+            "message": str(exc),
+            "details": {
+                "existing_dataset_id": str(exc.existing_id),
+                "existing_dataset_name": exc.existing_name,
+            },
+        }
+    }
+    return JSONResponse(body, status_code=status.HTTP_409_CONFLICT)
 
 
 async def _registration_closed_handler(_: Request, exc: Exception) -> JSONResponse:
@@ -265,6 +282,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(UnsupportedContentTypeError, _unsupported_content_type_handler)
     app.add_exception_handler(DocumentParseError, _document_parse_handler)
     app.add_exception_handler(DatasetIngestError, _dataset_ingest_handler)
+    app.add_exception_handler(DuplicateDatasetNameError, _duplicate_dataset_name_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(ProviderAuthError, _provider_auth_handler)
     app.add_exception_handler(ProviderRateLimitError, _provider_rate_limit_handler)

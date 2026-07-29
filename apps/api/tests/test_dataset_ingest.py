@@ -15,11 +15,14 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from httpx import AsyncClient
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.datasets.parser import parse_spreadsheet
+from app.ai.datasets.query import DatasetQueryService
+from app.application.ports.datasets import DatasetQuery
 from app.infrastructure.db.models import DatasetColumn, DatasetRow
 from app.infrastructure.db.repositories import DatasetRepository
 from app.shared.exceptions.datasets import (
@@ -313,3 +316,163 @@ async def test_replace_cross_tenant_returns_404(db_client: AsyncClient) -> None:
     )
     assert hijack.status_code == 404, hijack.text
     assert hijack.json()["error"]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_replace_soft_deleted_target_rejected(
+    db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    reg = await _register(db_client, "ds-softdel@example.com")
+    r = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("a.csv", _csv(_SHEET), "text/csv")},
+        headers=_auth(reg),
+    )
+    dataset_id = r.json()["dataset_id"]
+
+    # Soft-delete it, then try to replace — the deleted target must not resurrect.
+    await DatasetRepository(db_session).soft_delete_dataset(UUID(dataset_id))
+    await db_session.commit()
+
+    replace = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("b.csv", _csv(_SHEET), "text/csv")},
+        data={"replace_dataset_id": dataset_id},
+        headers=_auth(reg),
+    )
+    assert replace.status_code == 404, replace.text
+    assert replace.json()["error"]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_same_name_without_replace_returns_existing_signal(
+    db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    reg = await _register(db_client, "ds-dupname@example.com")
+    first = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("v1.csv", _csv(_SHEET), "text/csv")},
+        data={"name": "Bidco"},
+        headers=_auth(reg),
+    )
+    first_id = first.json()["dataset_id"]
+
+    # Same name, no replace, no opt-in → 409 pointing at the existing dataset.
+    dup = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("v2.csv", _csv(_SHEET), "text/csv")},
+        data={"name": "Bidco"},
+        headers=_auth(reg),
+    )
+    assert dup.status_code == 409, dup.text
+    err = dup.json()["error"]
+    assert err["code"] == "duplicate_dataset_name"
+    assert err["details"]["existing_dataset_id"] == first_id
+    assert err["details"]["existing_dataset_name"] == "Bidco"
+
+    # No silent duplicate was created — still exactly one "Bidco".
+    tenant = UUID(reg["active_tenant_id"])
+    datasets = await DatasetRepository(db_session).list_datasets(tenant)
+    assert [d.name for d in datasets].count("Bidco") == 1
+
+
+@pytest.mark.asyncio
+async def test_allow_duplicate_name_creates_second(
+    db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    reg = await _register(db_client, "ds-dupok@example.com")
+    first = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("v1.csv", _csv(_SHEET), "text/csv")},
+        data={"name": "Bidco"},
+        headers=_auth(reg),
+    )
+    first_id = first.json()["dataset_id"]
+
+    # Explicit opt-in → a deliberate second dataset with the same name.
+    second = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("v2.csv", _csv(_SHEET), "text/csv")},
+        data={"name": "Bidco", "allow_duplicate_name": "true"},
+        headers=_auth(reg),
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["dataset_id"] != first_id
+
+    tenant = UUID(reg["active_tenant_id"])
+    datasets = await DatasetRepository(db_session).list_datasets(tenant)
+    assert [d.name for d in datasets].count("Bidco") == 2
+
+
+@pytest.mark.asyncio
+async def test_replace_partial_failure_rolls_back(
+    db_app: FastAPI, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # raise_app_exceptions=False so the unhandled failure surfaces as a 500 the
+    # client can read, instead of propagating into the test (see test_error_handling).
+    transport = ASGITransport(app=db_app, raise_app_exceptions=False)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        reg = await _register(client, "ds-rollback@example.com")
+        first = await client.post(
+            "/api/v1/datasets/ingest",
+            files={"file": ("v1.csv", _csv(_SHEET), "text/csv")},  # 2 rows, 3 cols
+            headers=_auth(reg),
+        )
+        dataset_id = UUID(first.json()["dataset_id"])
+
+        # Force a failure AFTER the replace has hard-deleted the old rows/columns.
+        async def _boom(*_args: object, **_kwargs: object) -> int:
+            raise RuntimeError("insert blew up")
+
+        monkeypatch.setattr(DatasetRepository, "bulk_insert_rows", _boom)
+
+        new_sheet = [["Ticket", "State"], ["T-1", "closed"]]
+        replace = await client.post(
+            "/api/v1/datasets/ingest",
+            files={"file": ("v2.csv", _csv(new_sheet), "text/csv")},
+            data={"replace_dataset_id": str(dataset_id)},
+            headers=_auth(reg),
+        )
+        assert replace.status_code == 500, replace.text
+
+    # Whole transaction rolled back: the ORIGINAL 2 rows + 3 columns survive intact,
+    # never a half-replaced dataset.
+    repo = DatasetRepository(db_session)
+    assert await repo.count_rows(dataset_id) == 2
+    cols = await repo.get_columns(dataset_id)
+    assert {c.key for c in cols} == {"task", "status", "owner"}
+
+
+@pytest.mark.asyncio
+async def test_query_over_replaced_sees_new_data_only(
+    db_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    reg = await _register(db_client, "ds-replace-query@example.com")
+    tenant = UUID(reg["active_tenant_id"])
+    first = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("v1.csv", _csv(_SHEET), "text/csv")},  # 2 rows: task/status/owner
+        headers=_auth(reg),
+    )
+    dataset_id = UUID(first.json()["dataset_id"])
+
+    new_sheet = [["Ticket", "State"], ["T-1", "closed"], ["T-2", "open"], ["T-3", "open"]]
+    replace = await db_client.post(
+        "/api/v1/datasets/ingest",
+        files={"file": ("v2.csv", _csv(new_sheet), "text/csv")},
+        data={"replace_dataset_id": str(dataset_id)},
+        headers=_auth(reg),
+    )
+    assert replace.status_code == 200, replace.text
+
+    svc = DatasetQueryService(db_session)
+    counted = await svc.run(DatasetQuery(dataset_id=dataset_id), organization_id=tenant)
+    assert counted.value == 3  # NEW data's 3 rows, not the old 2
+    assert counted.total_rows_considered == 3
+
+    # The old columns are gone: a query over a removed key can't resolve.
+    with pytest.raises(ValueError, match="unknown column"):
+        await svc.run(
+            DatasetQuery.model_validate({"dataset_id": str(dataset_id), "group_by": "status"}),
+            organization_id=tenant,
+        )

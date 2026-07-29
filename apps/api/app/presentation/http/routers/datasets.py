@@ -53,6 +53,7 @@ async def ingest_dataset(
     sheet_name: Annotated[str | None, Form()] = None,
     header_row_index: Annotated[int, Form()] = 0,
     replace_dataset_id: Annotated[UUID | None, Form()] = None,
+    allow_duplicate_name: Annotated[bool, Form()] = False,
 ) -> DatasetIngestResponse:
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
@@ -82,6 +83,7 @@ async def ingest_dataset(
         sheet_name=sheet_name,
         header_row_index=header_row_index,
         replace_dataset_id=replace_dataset_id,
+        allow_duplicate_name=allow_duplicate_name,
     )
     return DatasetIngestResponse(
         dataset_id=result.dataset_id,

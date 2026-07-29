@@ -16,6 +16,8 @@ export type IngestArgs = {
   name?: string;
   sheetName?: string;
   headerRowIndex?: number; // 0-based
+  replaceDatasetId?: string; // replace this dataset's columns+rows in place
+  allowDuplicateName?: boolean; // opt into a second dataset with an existing name
 };
 
 export async function ingestDataset(args: IngestArgs): Promise<DatasetIngestResponse> {
@@ -26,6 +28,8 @@ export async function ingestDataset(args: IngestArgs): Promise<DatasetIngestResp
   if (args.name && args.name.trim()) form.append("name", args.name.trim());
   if (args.sheetName && args.sheetName.trim()) form.append("sheet_name", args.sheetName.trim());
   if (args.headerRowIndex != null) form.append("header_row_index", String(args.headerRowIndex));
+  if (args.replaceDatasetId) form.append("replace_dataset_id", args.replaceDatasetId);
+  if (args.allowDuplicateName) form.append("allow_duplicate_name", "true");
 
   // Content-Type unset so the browser adds multipart/form-data + boundary (the
   // http instance defaults to application/json, which would break the part).

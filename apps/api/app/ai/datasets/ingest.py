@@ -17,6 +17,7 @@ openpyxl does not expose a parser hook to plug it in cleanly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,7 @@ from app.ai.datasets.parser import parse_spreadsheet
 from app.application.ports.repositories import DatasetColumnSpec
 from app.infrastructure.db.repositories import DatasetRepository
 from app.shared.exceptions.common import NotFoundError
+from app.shared.exceptions.datasets import DuplicateDatasetNameError
 
 _XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _CSV_CONTENT_TYPES = frozenset({"text/csv", "application/csv"})
@@ -62,11 +64,16 @@ async def ingest_spreadsheet(
     sheet_name: str | None = None,
     header_row_index: int = 0,
     replace_dataset_id: UUID | None = None,
+    allow_duplicate_name: bool = False,
 ) -> IngestResult:
     """Parse then persist. On `replace_dataset_id` the existing columns + rows are
     HARD-deleted and repopulated in place (rows carry a soft-delete mixin, so a
     replace must hard-delete to avoid unbounded accumulation). Raises NotFoundError
-    if the replace target is not the tenant's dataset."""
+    if the replace target is not the tenant's dataset.
+
+    When creating (no `replace_dataset_id`), a same-name active dataset raises
+    DuplicateDatasetNameError — no silent duplicate — unless `allow_duplicate_name`
+    opts into a deliberate second dataset."""
     parsed = parse_spreadsheet(
         data, kind=kind, sheet_name=sheet_name, header_row_index=header_row_index
     )
@@ -86,8 +93,13 @@ async def ingest_spreadsheet(
         dataset.name = dataset_name
         dataset.sheet_name = sheet_name
         dataset.status = "ready"
+        dataset.updated_at = datetime.now(UTC)  # pin the bump even if fields are unchanged
         await session.flush()
     else:
+        if not allow_duplicate_name:
+            existing = await repo.find_active_dataset_by_name(organization_id, dataset_name)
+            if existing is not None:
+                raise DuplicateDatasetNameError(existing.id, existing.name)
         dataset = await repo.create_dataset(
             organization_id=organization_id,
             name=dataset_name,

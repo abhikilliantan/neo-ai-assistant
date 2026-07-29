@@ -12,6 +12,19 @@ import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/relative-time";
 import { getDataset, ingestDataset, listDatasets } from "@/services/datasets";
 
+// A same-name upload without a chosen replace comes back 409 with the existing
+// dataset in `error.details` — surfaced as an inline replace-or-create prompt.
+type DuplicateConflict = { id: string; name: string };
+
+function duplicateConflict(err: unknown): DuplicateConflict | null {
+  if (!axios.isAxiosError(err) || err.response?.status !== 409) return null;
+  const body = err.response?.data as ApiErrorEnvelope | undefined;
+  if (body?.error?.code !== "duplicate_dataset_name") return null;
+  const d = body.error.details;
+  if (!d || typeof d.existing_dataset_id !== "string") return null;
+  return { id: d.existing_dataset_id, name: String(d.existing_dataset_name ?? "") };
+}
+
 // Spreadsheet types the backend accepts (.xlsx / .csv + their MIME types).
 const ACCEPT =
   ".xlsx,.csv," + "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
@@ -34,13 +47,24 @@ function UploadCard() {
   const [name, setName] = useState("");
   const [sheetName, setSheetName] = useState("");
   const [headerRow, setHeaderRow] = useState(""); // 0-based; blank → backend default 0
+  const [replaceId, setReplaceId] = useState(""); // "" → create new; else replace in place
   const [result, setResult] = useState<DatasetIngestResponse | null>(null);
 
+  // Populates the "Replace existing dataset" select; shares the list query cache.
+  const { data: datasets } = useQuery({ queryKey: ["datasets"], queryFn: listDatasets });
+
   const upload = useMutation({
-    mutationFn: () => {
+    mutationFn: (override?: { replaceDatasetId?: string; allowDuplicateName?: boolean }) => {
       if (!file) throw new Error("no file");
       const headerRowIndex = headerRow.trim() === "" ? undefined : Number(headerRow);
-      return ingestDataset({ file, name, sheetName, headerRowIndex });
+      return ingestDataset({
+        file,
+        name,
+        sheetName,
+        headerRowIndex,
+        replaceDatasetId: override?.replaceDatasetId ?? (replaceId || undefined),
+        allowDuplicateName: override?.allowDuplicateName,
+      });
     },
     onSuccess: (data) => {
       setResult(data);
@@ -49,10 +73,13 @@ function UploadCard() {
       setName("");
       setSheetName("");
       setHeaderRow("");
+      setReplaceId("");
       if (inputRef.current) inputRef.current.value = "";
       void queryClient.invalidateQueries({ queryKey: ["datasets"] });
     },
   });
+
+  const conflict = upload.isError ? duplicateConflict(upload.error) : null;
 
   const headerRowInvalid =
     headerRow.trim() !== "" && (!Number.isInteger(Number(headerRow)) || Number(headerRow) < 0);
@@ -60,7 +87,7 @@ function UploadCard() {
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (canSubmit) upload.mutate();
+    if (canSubmit) upload.mutate(undefined); // plain submit; overrides come from the conflict prompt
   }
 
   return (
@@ -122,6 +149,33 @@ function UploadCard() {
             <p className="text-sm text-danger">Header row must be a whole number (0 or greater).</p>
           )}
 
+          {datasets && datasets.length > 0 && (
+            <div className="space-y-1.5">
+              <label htmlFor="dataset-replace" className="text-sm font-medium text-foreground">
+                Replace existing dataset (optional)
+              </label>
+              <select
+                id="dataset-replace"
+                value={replaceId}
+                disabled={upload.isPending}
+                onChange={(e) => setReplaceId(e.target.value)}
+                className="block w-full rounded-control border border-glass-border bg-glass px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="">Create a new dataset</option>
+                {datasets.map((d) => (
+                  <option key={d.dataset_id} value={d.dataset_id}>
+                    {d.name} ({d.row_count} rows)
+                  </option>
+                ))}
+              </select>
+              {replaceId && (
+                <p className="text-sm text-muted-foreground">
+                  Its columns and rows will be replaced with this file.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={!canSubmit}>
               {upload.isPending ? (
@@ -138,8 +192,33 @@ function UploadCard() {
             )}
           </div>
 
-          {upload.isError && (
-            <p className="text-sm text-danger">{uploadErrorMessage(upload.error)}</p>
+          {conflict ? (
+            <div className="space-y-2 rounded-card border border-accent/40 bg-glass-hi p-3">
+              <p className="text-sm text-foreground">
+                A dataset named “{conflict.name}” already exists — replace it or create a new one?
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={upload.isPending}
+                  onClick={() => upload.mutate({ replaceDatasetId: conflict.id })}
+                >
+                  Replace it
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={upload.isPending}
+                  onClick={() => upload.mutate({ allowDuplicateName: true })}
+                >
+                  Create new
+                </Button>
+              </div>
+            </div>
+          ) : (
+            upload.isError && (
+              <p className="text-sm text-danger">{uploadErrorMessage(upload.error)}</p>
+            )
           )}
         </form>
 

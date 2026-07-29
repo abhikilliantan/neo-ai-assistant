@@ -756,6 +756,20 @@ class DatasetRepository:
     async def get_dataset(self, dataset_id: UUID) -> Dataset | None:
         return await self.session.get(Dataset, dataset_id)
 
+    async def find_active_dataset_by_name(self, organization_id: UUID, name: str) -> Dataset | None:
+        """The tenant's active (not soft-deleted) dataset with this exact name, if
+        any — backs the 1b duplicate-name guard. Newest wins if the tenant already
+        has duplicates from before the guard existed."""
+        stmt = (
+            select(Dataset)
+            .where(Dataset.organization_id == organization_id)
+            .where(Dataset.name == name)
+            .where(Dataset.deleted_at.is_(None))
+            .order_by(Dataset.created_at.desc(), Dataset.id.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
     async def list_datasets(
         self, organization_id: UUID, *, active_only: bool = True
     ) -> list[Dataset]:
