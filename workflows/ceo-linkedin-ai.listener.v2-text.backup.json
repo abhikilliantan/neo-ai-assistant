@@ -1,0 +1,258 @@
+{
+  "name": "CEO LinkedIn AI - Listener",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "id": "e4000000-0000-4000-8000-000000000001",
+      "name": "Every 15s"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/deleteWebhook",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [220, 0],
+      "id": "e4000000-0000-4000-8000-000000000002",
+      "name": "Delete Webhook",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// getUpdates offset lives in workflow static data (persists across active runs).\n// offset = lastUpdateId + 1 confirms/clears already-seen updates; 0 on first run.\nconst staticData = $getWorkflowStaticData('global');\nconst last = staticData.lastUpdateId || 0;\nreturn [{ json: { offset: last ? last + 1 : 0 } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0],
+      "id": "e4000000-0000-4000-8000-000000000003",
+      "name": "Read Offset"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"callback_query\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [660, 0],
+      "id": "e4000000-0000-4000-8000-000000000004",
+      "name": "Get Updates"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse getUpdates response, advance the offset, emit ONE item per button tap.\nconst res = $input.first().json || {};\nconst updates = Array.isArray(res.result) ? res.result : [];\nconst staticData = $getWorkflowStaticData('global');\nlet maxId = staticData.lastUpdateId || 0;\nconst out = [];\n\nfor (const u of updates) {\n  if (typeof u.update_id === 'number' && u.update_id > maxId) maxId = u.update_id;\n  const cq = u.callback_query;\n  if (!cq) continue;\n  const msg = cq.message || {};\n  out.push({\n    json: {\n      // callback_query.message.text IS the exact clean post (Part 1 sends it as the\n      // button message's plain text — no label, no Source line, no footer).\n      cleanText: msg.text || '',\n      callbackQueryId: cq.id,\n      chatId: msg.chat && msg.chat.id,\n      messageId: msg.message_id,\n    },\n  });\n}\n\n// Advance past everything seen (including non-callback updates) so taps aren't reprocessed.\nstaticData.lastUpdateId = maxId;\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "id": "e4000000-0000-4000-8000-000000000005",
+      "name": "Process Updates"
+    },
+    {
+      "parameters": {
+        "postAs": "person",
+        "person": "",
+        "text": "={{ $json.cleanText }}",
+        "shareMediaCategory": "NONE",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [1100, 0],
+      "id": "e4000000-0000-4000-8000-000000000006",
+      "name": "Post to LinkedIn",
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "LinkedIn account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $('Process Updates').item.json.callbackQueryId }}",
+        "additionalFields": {
+          "text": "Posted to LinkedIn ✅"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1320, -100],
+      "id": "e4000000-0000-4000-8000-000000000007",
+      "name": "Answer Callback",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "editMessageText",
+        "chatId": "={{ $('Process Updates').item.json.chatId }}",
+        "messageId": "={{ $('Process Updates').item.json.messageId }}",
+        "text": "={{ $('Process Updates').item.json.cleanText + '\\n\\n✅ Posted to LinkedIn' }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1540, -100],
+      "id": "e4000000-0000-4000-8000-000000000008",
+      "name": "Mark Posted",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Process Updates').item.json.chatId }}",
+        "text": "={{ '⚠️ LinkedIn post failed:\\n' + ($json.error && $json.error.message ? $json.error.message : JSON.stringify($json.error || $json)) }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1320, 120],
+      "id": "e4000000-0000-4000-8000-000000000009",
+      "name": "Report Error",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 15s": {
+      "main": [
+        [
+          {
+            "node": "Delete Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Offset": {
+      "main": [
+        [
+          {
+            "node": "Get Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Updates": {
+      "main": [
+        [
+          {
+            "node": "Process Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Updates": {
+      "main": [
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback": {
+      "main": [
+        [
+          {
+            "node": "Mark Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d4117ed9cb08c0a91a0bdcccd08aa06dda1d9bfaa982caee29f6239c89d540e"
+  },
+  "tags": []
+}

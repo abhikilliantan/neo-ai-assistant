@@ -1,5 +1,6 @@
 import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 import { env } from "@/lib/env";
+import { requestId } from "@/lib/request-id";
 import { clearAndRedirect, refreshOnce } from "@/services/session-refresh";
 import { useSessionStore } from "@/store/session";
 
@@ -10,7 +11,7 @@ export const http: AxiosInstance = axios.create({
 });
 
 http.interceptors.request.use((config) => {
-  config.headers["X-Request-ID"] = crypto.randomUUID();
+  config.headers["X-Request-ID"] = requestId();
   const token = useSessionStore.getState().accessToken;
   if (token && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${token}`;

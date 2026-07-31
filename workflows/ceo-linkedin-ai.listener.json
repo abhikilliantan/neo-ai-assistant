@@ -1,0 +1,2232 @@
+{
+  "name": "CEO LinkedIn AI - Listener",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "id": "b8000000-0000-4000-8000-000000000001",
+      "name": "Every 15s"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/deleteWebhook",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [200, 0],
+      "id": "b8000000-0000-4000-8000-000000000002",
+      "name": "Delete Webhook",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst last = sd.lastUpdateId || 0;\nreturn [{ json: { offset: last ? last + 1 : 0 } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0],
+      "id": "b8000000-0000-4000-8000-000000000003",
+      "name": "Read Offset"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"callback_query\",\"message\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [600, 0],
+      "id": "b8000000-0000-4000-8000-000000000004",
+      "name": "Get Updates"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Emit one item per actionable update.\n// Legacy kinds (unchanged): 'image', 'text', 'topics'.\n// Instant-Post kinds: 'cbedit'/'cbpost' (button taps) and 'ipdraft'/'ipawait'/\n// 'ipedit'/'iptime' (Abhishek's own material / edit / time replies). Which IP\n// kind a plain message is depends on the chat's CURRENT draft status. A Code\n// node can't query the linkedin_drafts Data Table inline, so status is read\n// from a static-data mirror (sd.ipDrafts) that every transition write-through-\n// mirrors to the table for durability/inspection.\nconst res = $input.first().json || {};\nconst updates = Array.isArray(res.result) ? res.result : [];\nconst sd = $getWorkflowStaticData('global');\nif (!sd.ipDrafts) sd.ipDrafts = {};\nlet maxId = sd.lastUpdateId || 0;\nconst MK = /^\\[{1,2}go:(\\d{4}-\\d{2}-\\d{2})\\]{1,2}\\r?\\n?/;\nconst out = [];\nfor (const u of updates) {\n  if (typeof u.update_id === 'number' && u.update_id > maxId) maxId = u.update_id;\n\n  // A) button tap\n  const cq = u.callback_query;\n  if (cq) {\n    const m = cq.message || {};\n    const data = cq.data || '';\n    const chatId = m.chat && m.chat.id;\n    if (data === 'ip_edit') { out.push({ json: { kind: 'cbedit', chatId, messageId: m.message_id, callbackQueryId: cq.id } }); continue; }\n    if (data === 'ip_post') { out.push({ json: { kind: 'cbpost', chatId, messageId: m.message_id, callbackQueryId: cq.id } }); continue; }\n    // legacy v2-approve button -> text-only publish\n    let t = m.text || m.caption || '';\n    const mk = t.match(MK); if (mk) t = t.slice(mk[0].length);\n    out.push({ json: { kind: 'text', postText: t, fileId: '', callbackQueryId: cq.id, chatId, messageId: m.message_id } });\n    continue;\n  }\n\n  const msg = u.message;\n  if (!msg) continue;\n  const chatId = msg.chat && msg.chat.id;\n\n  // B) photo reply -> schedule for the post's own day (legacy)\n  if (msg.reply_to_message) {\n    let fileId = '';\n    if (Array.isArray(msg.photo) && msg.photo.length) fileId = msg.photo[msg.photo.length - 1].file_id;\n    else if (msg.document && /^image\\//.test(msg.document.mime_type || '')) fileId = msg.document.file_id;\n    if (!fileId) continue;\n    let rtext = msg.reply_to_message.text || msg.reply_to_message.caption || '';\n    const mk = rtext.match(MK);\n    let targetDate = '';\n    if (mk) { targetDate = mk[1]; rtext = rtext.slice(mk[0].length); }\n    const postText = rtext;\n    if (!postText.trim() || postText.startsWith('📅') || postText.startsWith('↩')) continue;\n    out.push({ json: { kind: 'image', postText, fileId, targetDate, chatId, messageId: msg.message_id } });\n    continue;\n  }\n\n  const status = (sd.ipDrafts[chatId] && sd.ipDrafts[chatId].status) || 'idle';\n\n  // C) legacy \"topics: ...\" steering (only when idle, so it can't hijack an edit/time turn)\n  if (status === 'idle' && !msg.photo && typeof msg.text === 'string') {\n    const tm = msg.text.match(/^\\s*topics\\s*:\\s*(.+)$/i);\n    if (tm) { out.push({ json: { kind: 'topics', topics: tm[1].trim(), chatId } }); continue; }\n  }\n\n  // D) Instant-Post material / follow-ups\n  let photoFileId = '';\n  if (Array.isArray(msg.photo) && msg.photo.length) photoFileId = msg.photo[msg.photo.length - 1].file_id;\n  else if (msg.document && /^image\\//.test(msg.document.mime_type || '')) photoFileId = msg.document.file_id;\n  let voiceFileId = '';\n  if (msg.voice && msg.voice.file_id) voiceFileId = msg.voice.file_id;\n  else if (msg.audio && msg.audio.file_id) voiceFileId = msg.audio.file_id;\n  const text = msg.caption || msg.text || '';\n  const hasPhoto = !!photoFileId, hasVoice = !!voiceFileId;\n\n  let kind = '';\n  if (status === 'awaiting_time') kind = 'iptime';\n  else if (status === 'awaiting_edit') kind = 'ipedit';\n  else if (status === 'awaiting_photo') kind = hasPhoto ? 'ipdraft' : ((hasVoice || text.trim()) ? 'ipawait' : '');\n  else {\n    if (hasVoice && hasPhoto) kind = 'ipdraft';\n    else if (hasPhoto && text.trim()) kind = 'ipdraft';\n    else if (hasVoice) kind = 'ipawait';\n  }\n  if (!kind) continue;\n  out.push({ json: { kind, chatId, messageId: msg.message_id, text, photoFileId, voiceFileId, callbackQueryId: '' } });\n}\nsd.lastUpdateId = maxId;\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 0],
+      "id": "b8000000-0000-4000-8000-000000000005",
+      "name": "Process Updates"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.kind }}",
+              "rightValue": "image",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1000, 0],
+      "id": "b8000000-0000-4000-8000-000000000006",
+      "name": "Route: image?"
+    },
+    {
+      "parameters": {
+        "postAs": "person",
+        "person": "",
+        "text": "={{ $('Process Updates').item.json.postText }}",
+        "shareMediaCategory": "NONE",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [1440, 140],
+      "id": "b8000000-0000-4000-8000-000000000010",
+      "name": "Post Text to LinkedIn",
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "LinkedIn account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $('Process Updates').item.json.callbackQueryId }}",
+        "additionalFields": {
+          "text": "Posted to LinkedIn ✅"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1660, 60],
+      "id": "b8000000-0000-4000-8000-000000000011",
+      "name": "Answer Callback",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/editMessageText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Process Updates').item.json.chatId, message_id: $('Process Updates').item.json.messageId, text: $('Process Updates').item.json.postText + '\\n\\n✅ Posted to LinkedIn' }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1880, 60],
+      "id": "b8000000-0000-4000-8000-000000000012",
+      "name": "Mark Posted"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Process Updates').item.json.chatId }}",
+        "text": "={{ '⚠️ LinkedIn post failed:\\n' + ($json.error && $json.error.message ? $json.error.message : JSON.stringify($json.error || $json)) }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1660, 260],
+      "id": "b8000000-0000-4000-8000-000000000013",
+      "name": "Report Error",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Queue the photo-reply for its post's OWN day at 06:00 Africa/Nairobi (EAT, fixed UTC+3).\nconst sd = $getWorkflowStaticData('global');\nif (!Array.isArray(sd.scheduledPosts)) sd.scheduledPosts = [];\nconst queue = sd.scheduledPosts;\nconst inp = $input.first().json;\nconst EAT = 3 * 60 * 60 * 1000;\n\nfunction slotFromDate(dstr) {                 // 'YYYY-MM-DD' EAT -> 06:00 EAT as UTC ms\n  const [y, m, d] = dstr.split('-').map(Number);\n  return Date.UTC(y, m - 1, d, 6, 0, 0, 0) - EAT;\n}\nfunction nextWeekday6(baseMs) {               // fallback if no marker date present\n  const w = new Date(baseMs + EAT);\n  const y = w.getUTCFullYear(), mo = w.getUTCMonth(), d0 = w.getUTCDate();\n  for (let i = 0; i < 14; i++) {\n    const wallMs = Date.UTC(y, mo, d0 + i, 6, 0, 0, 0);\n    const utcMs = wallMs - EAT;\n    const dow = new Date(wallMs).getUTCDay();\n    if (utcMs > baseMs && dow >= 1 && dow <= 5) return utcMs;\n  }\n  return baseMs;\n}\n\nconst slotMs = /^\\d{4}-\\d{2}-\\d{2}$/.test(inp.targetDate || '')\n  ? slotFromDate(inp.targetDate)\n  : nextWeekday6(Date.now());\n\nconst goLiveISO = new Date(slotMs).toISOString();\nconst id = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;\nqueue.push({ id, postText: inp.postText, fileId: inp.fileId, goLiveISO, posted: false });\n\nconst days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];\nconst mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\nconst wall = new Date(slotMs + EAT);\nconst label = `${days[wall.getUTCDay()]} ${String(wall.getUTCDate()).padStart(2, '0')} ${mons[wall.getUTCMonth()]}`;\nreturn [{ json: { chatId: inp.chatId, goLiveISO, label } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1220, -120],
+      "id": "c9000000-0000-4000-8000-000000000001",
+      "name": "Schedule Post"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "=✅ Scheduled — going live {{ $json.label }} at 6:00 AM (EAT).",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1440, -120],
+      "id": "c9000000-0000-4000-8000-000000000002",
+      "name": "Reply Scheduled",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 480],
+      "id": "c9000000-0000-4000-8000-000000000003",
+      "name": "Publish every 15m"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Every run: for each unposted item -> publish today's (>=06:00), cancel past days, wait on future.\nconst sd = $getWorkflowStaticData('global');\nconst queue = Array.isArray(sd.scheduledPosts) ? sd.scheduledPosts : [];\nconst EAT = 3 * 60 * 60 * 1000;\nconst now = Date.now();\nconst days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];\nconst mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\nconst dayNum = (ms) => { const w = new Date(ms + EAT); return w.getUTCFullYear() * 10000 + (w.getUTCMonth() + 1) * 100 + w.getUTCDate(); };\nconst today = dayNum(now);\nconst out = [];\nfor (const p of queue) {\n  if (p.posted || p.cancelled) continue;\n  const t = Date.parse(p.goLiveISO);\n  if (isNaN(t)) continue;\n  const itemDay = dayNum(t);\n  const w = new Date(t + EAT);\n  const label = `${days[w.getUTCDay()]} ${String(w.getUTCDate()).padStart(2, '0')} ${mons[w.getUTCMonth()]}`;\n  if (itemDay < today) {\n    p.cancelled = true;                                   // missed its day -> drop, never publish\n    out.push({ json: { kind: 'cancel', id: p.id, label } });\n  } else if (itemDay === today && now >= t) {\n    out.push({ json: { kind: 'publish', id: p.id, postText: p.postText, fileId: p.fileId, label } });\n  } // else: future -> wait\n}\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 480],
+      "id": "c9000000-0000-4000-8000-000000000004",
+      "name": "Scan Queue"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $('Scan Queue').item.json.fileId }}",
+        "download": true
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [440, 480],
+      "id": "c9000000-0000-4000-8000-000000000005",
+      "name": "Download Scheduled Photo",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "postAs": "person",
+        "person": "",
+        "text": "={{ $('Scan Queue').item.json.postText }}",
+        "shareMediaCategory": "IMAGE",
+        "binaryPropertyName": "data",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [660, 480],
+      "id": "c9000000-0000-4000-8000-000000000006",
+      "name": "Publish Image to LinkedIn",
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "LinkedIn account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mark the just-published item posted:true and persist to shared static data.\nconst sd = $getWorkflowStaticData('global');\nconst queue = Array.isArray(sd.scheduledPosts) ? sd.scheduledPosts : [];\nconst id = $('Scan Queue').item.json.id;\nfor (const p of queue) { if (p.id === id) { p.posted = true; break; } }\nreturn $input.all();\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 400],
+      "id": "c9000000-0000-4000-8000-000000000007",
+      "name": "Mark Item Posted"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "893508401",
+        "text": "=✅ Now live on LinkedIn.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 400],
+      "id": "c9000000-0000-4000-8000-000000000008",
+      "name": "Now Live",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "893508401",
+        "text": "={{ '⚠️ Scheduled LinkedIn post failed (left queued for retry):\\n' + ($json.error && $json.error.message ? $json.error.message : JSON.stringify($json.error || $json)) }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [880, 600],
+      "id": "c9000000-0000-4000-8000-000000000009",
+      "name": "Publish Error",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.kind }}",
+              "rightValue": "publish",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [420, 480],
+      "id": "d4000000-0000-4000-8000-000000000010",
+      "name": "Route: publish or cancel"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "893508401",
+        "text": "=⏭️ {{ $json.label }}'s post was cancelled — its day passed.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [640, 640],
+      "id": "d4000000-0000-4000-8000-000000000011",
+      "name": "Cancel Notify",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.kind }}",
+              "rightValue": "text",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1000, 200],
+      "id": "d4000000-0000-4000-8000-000000000012",
+      "name": "Route: text or topics"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "zkDV06yIU0My09vB",
+          "cachedResultName": "linkedin_config"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "key": "next_topics",
+            "value": "={{ $('Process Updates').item.json.topics }}"
+          },
+          "matchingColumns": ["key"],
+          "schema": [
+            {
+              "id": "key",
+              "displayName": "key",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "value",
+              "displayName": "value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [1220, 320],
+      "id": "d4000000-0000-4000-8000-000000000013",
+      "name": "Save Topics"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Process Updates').item.json.chatId }}",
+        "text": "=✅ Topics saved for next week: {{ $('Process Updates').item.json.topics }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1440, 320],
+      "id": "d4000000-0000-4000-8000-000000000014",
+      "name": "Reply Topics Saved",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r0",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "cb",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "callback"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "ip",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ipmsg"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1000, 560],
+      "id": "e5000000-0000-4000-8000-000000000001",
+      "name": "Route by Kind"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.voiceFileId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1220, 640],
+      "id": "e5000000-0000-4000-8000-000000000002",
+      "name": "Route: has voice?"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.voiceFileId }}",
+        "download": true
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1440, 600],
+      "id": "e5000000-0000-4000-8000-000000000003",
+      "name": "Download Voice",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Base64-encode the downloaded voice note for Gemini inlineData. IF passes the\n// item through unchanged, so original fields come from 'Route: has voice?'.\nconst src = $('Route: has voice?').item.json;\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nreturn [{ json: Object.assign({}, src, { audioB64: buf.toString('base64') }) }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 600],
+      "id": "e5000000-0000-4000-8000-000000000004",
+      "name": "Voice to B64"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: \"Transcribe this voice note verbatim in its original language. Return only the transcript text.\" }, { inlineData: { mimeType: \"audio/ogg\", data: $json.audioB64 } } ] } ] }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1840, 600],
+      "id": "e5000000-0000-4000-8000-000000000005",
+      "name": "Transcribe Voice",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YzQkTv2OYztQx7p6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine caption + Gemini transcript into userText.\nconst src = $('Route: has voice?').item.json;\nlet transcript = '';\ntry { transcript = $json.candidates[0].content.parts[0].text || ''; } catch (e) {}\nconst userText = [src.text, transcript].filter(s => s && s.trim()).join('\\n').trim();\nreturn [{ json: Object.assign({}, src, { userText }) }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2040, 600],
+      "id": "e5000000-0000-4000-8000-000000000006",
+      "name": "Notes from Voice"
+    },
+    {
+      "parameters": {
+        "jsCode": "// No voice: userText is just the text/caption. IF passed the item through.\nconst src = $json;\nreturn [{ json: Object.assign({}, src, { userText: (src.text || '').trim() }) }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 760],
+      "id": "e5000000-0000-4000-8000-000000000007",
+      "name": "Notes from Text"
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r0",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "ipdraft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "draft"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "ipawait",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "await"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "ipedit",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "edit"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r3",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "iptime",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "time"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [2260, 640],
+      "id": "e5000000-0000-4000-8000-000000000008",
+      "name": "Route IP Action"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge fresh notes with any stored notes (voice-first -> awaiting_photo -> photo).\nconst s = $json;\nconst sd = $getWorkflowStaticData('global'); if (!sd.ipDrafts) sd.ipDrafts = {};\nconst prior = sd.ipDrafts[s.chatId] || {};\nconst notes = ((prior.status === 'awaiting_photo' && prior.notes) ? prior.notes + '\\n' : '') + (s.userText || '');\nconst photoFileId = s.photoFileId || prior.photoFileId || '';\nsd.ipDrafts[s.chatId] = Object.assign({}, prior, { status: 'drafting', notes, photoFileId, chatId: s.chatId });\nreturn [{ json: { chatId: s.chatId, notes, photoFileId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2480, 360],
+      "id": "e5000000-0000-4000-8000-000000000009",
+      "name": "Prep Draft"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: \"You are ghost-writing a LinkedIn post in Abhishek Killian's own first-person voice (founder of Skillmind; SAP and enterprise-AI leader). Write ONE post from the notes below.\\n\\nStructure:\\n- Line 1: a contrarian or counter-intuitive hook.\\n- 2 to 4 bullets, each starting with the arrow character → .\\n- One short quotable reframe line.\\n- One CXO-level question to the reader.\\n- 4 to 6 relevant hashtags.\\n\\nVoice: pro-AI, HR-tech, SAP, Skillmind; confident, practical, African-enterprise lens. Plain text only, NO markdown, NO asterisks. Keep the whole post under 900 characters so it fits a Telegram photo caption. Return only the post text.\\n\\nNOTES:\\n\" + ($json.notes || \"\") } ] } ] }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2680, 360],
+      "id": "e5000000-0000-4000-8000-000000000010",
+      "name": "Gemini Draft",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YzQkTv2OYztQx7p6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store the generated draft; move to awaiting_action.\nlet draftText = '';\ntry { draftText = $json.candidates[0].content.parts[0].text || ''; } catch (e) {}\ndraftText = draftText.trim();\nconst p = $('Prep Draft').item.json;\nconst sd = $getWorkflowStaticData('global'); if (!sd.ipDrafts) sd.ipDrafts = {};\nconst prior = sd.ipDrafts[p.chatId] || {};\nsd.ipDrafts[p.chatId] = Object.assign({}, prior, { status: 'awaiting_action', draftText, photoFileId: p.photoFileId, notes: p.notes, chatId: p.chatId });\nreturn [{ json: { chatId: p.chatId, status: 'awaiting_action', notes: p.notes, draftText, photoFileId: p.photoFileId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 360],
+      "id": "e5000000-0000-4000-8000-000000000011",
+      "name": "Save Draft"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "QyA17fWJpqyKDrPy",
+          "cachedResultName": "linkedin_drafts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatId": "={{ String($('Save Draft').item.json.chatId) }}",
+            "status": "={{ $('Save Draft').item.json.status }}",
+            "notes": "={{ $('Save Draft').item.json.notes }}",
+            "draftText": "={{ $('Save Draft').item.json.draftText }}",
+            "photoFileId": "={{ $('Save Draft').item.json.photoFileId }}"
+          },
+          "matchingColumns": ["chatId"],
+          "schema": [
+            {
+              "id": "chatId",
+              "displayName": "chatId",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "draftText",
+              "displayName": "draftText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "photoFileId",
+              "displayName": "photoFileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [3080, 360],
+      "id": "e5000000-0000-4000-8000-000000000012",
+      "name": "DT Save Draft"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendPhoto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Save Draft').item.json.chatId, photo: $('Save Draft').item.json.photoFileId, caption: $('Save Draft').item.json.draftText, reply_markup: { inline_keyboard: [ [ { text: '✅ Post', callback_data: 'ip_post' }, { text: '✏️ Edit', callback_data: 'ip_edit' } ] ] } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [3280, 360],
+      "id": "e5000000-0000-4000-8000-000000000013",
+      "name": "Send Draft Photo"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Voice-only material (or more notes while awaiting a photo): stash notes, ask for the photo.\nconst s = $json;\nconst sd = $getWorkflowStaticData('global'); if (!sd.ipDrafts) sd.ipDrafts = {};\nconst prior = sd.ipDrafts[s.chatId] || {};\nconst notes = ((prior.status === 'awaiting_photo' && prior.notes) ? prior.notes + '\\n' : '') + (s.userText || '');\nsd.ipDrafts[s.chatId] = Object.assign({}, prior, { status: 'awaiting_photo', notes, chatId: s.chatId });\nreturn [{ json: { chatId: s.chatId, status: 'awaiting_photo', notes, draftText: prior.draftText || '', photoFileId: prior.photoFileId || '' } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2480, 560],
+      "id": "e5000000-0000-4000-8000-000000000014",
+      "name": "Prep Await"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "QyA17fWJpqyKDrPy",
+          "cachedResultName": "linkedin_drafts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatId": "={{ String($('Prep Await').item.json.chatId) }}",
+            "status": "={{ $('Prep Await').item.json.status }}",
+            "notes": "={{ $('Prep Await').item.json.notes }}",
+            "draftText": "={{ $('Prep Await').item.json.draftText }}",
+            "photoFileId": "={{ $('Prep Await').item.json.photoFileId }}"
+          },
+          "matchingColumns": ["chatId"],
+          "schema": [
+            {
+              "id": "chatId",
+              "displayName": "chatId",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "draftText",
+              "displayName": "draftText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "photoFileId",
+              "displayName": "photoFileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [2680, 560],
+      "id": "e5000000-0000-4000-8000-000000000015",
+      "name": "DT Save Await"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Prep Await').item.json.chatId }}",
+        "text": "=🎙️ Got it. Now send me the photo you want on the post.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2880, 560],
+      "id": "e5000000-0000-4000-8000-000000000016",
+      "name": "Ask Photo",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare a redraft from the prior draft + his change instructions.\nconst s = $json;\nconst sd = $getWorkflowStaticData('global'); if (!sd.ipDrafts) sd.ipDrafts = {};\nconst prior = sd.ipDrafts[s.chatId] || {};\nreturn [{ json: { chatId: s.chatId, prevDraft: prior.draftText || '', instructions: s.userText || '', notes: prior.notes || '', photoFileId: prior.photoFileId || '' } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2480, 760],
+      "id": "e5000000-0000-4000-8000-000000000017",
+      "name": "Prep Redraft"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: \"Revise this LinkedIn post in Abhishek Killian's first-person voice.\\n\\nCURRENT POST:\\n\" + ($('Prep Redraft').item.json.prevDraft || \"\") + \"\\n\\nAPPLY THESE CHANGES:\\n\" + ($('Prep Redraft').item.json.instructions || \"\") + \"\\n\\nReturn the FULL revised post, same structure (contrarian hook, arrow → bullets, quotable reframe, CXO question, 4-6 hashtags), plain text, no markdown, under 900 characters. Return only the post text.\" } ] } ] }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2680, 760],
+      "id": "e5000000-0000-4000-8000-000000000018",
+      "name": "Gemini Redraft",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YzQkTv2OYztQx7p6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store the revised draft; back to awaiting_action.\nlet draftText = '';\ntry { draftText = $json.candidates[0].content.parts[0].text || ''; } catch (e) {}\ndraftText = draftText.trim();\nconst p = $('Prep Redraft').item.json;\nconst sd = $getWorkflowStaticData('global'); if (!sd.ipDrafts) sd.ipDrafts = {};\nconst prior = sd.ipDrafts[p.chatId] || {};\nsd.ipDrafts[p.chatId] = Object.assign({}, prior, { status: 'awaiting_action', draftText, photoFileId: p.photoFileId, notes: p.notes, chatId: p.chatId });\nreturn [{ json: { chatId: p.chatId, status: 'awaiting_action', notes: p.notes, draftText, photoFileId: p.photoFileId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 760],
+      "id": "e5000000-0000-4000-8000-000000000019",
+      "name": "Save Redraft"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "QyA17fWJpqyKDrPy",
+          "cachedResultName": "linkedin_drafts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatId": "={{ String($('Save Redraft').item.json.chatId) }}",
+            "status": "={{ $('Save Redraft').item.json.status }}",
+            "notes": "={{ $('Save Redraft').item.json.notes }}",
+            "draftText": "={{ $('Save Redraft').item.json.draftText }}",
+            "photoFileId": "={{ $('Save Redraft').item.json.photoFileId }}"
+          },
+          "matchingColumns": ["chatId"],
+          "schema": [
+            {
+              "id": "chatId",
+              "displayName": "chatId",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "draftText",
+              "displayName": "draftText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "photoFileId",
+              "displayName": "photoFileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [3080, 760],
+      "id": "e5000000-0000-4000-8000-000000000020",
+      "name": "DT Save Redraft"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendPhoto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Save Redraft').item.json.chatId, photo: $('Save Redraft').item.json.photoFileId, caption: $('Save Redraft').item.json.draftText, reply_markup: { inline_keyboard: [ [ { text: '✅ Post', callback_data: 'ip_post' }, { text: '✏️ Edit', callback_data: 'ip_edit' } ] ] } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [3280, 760],
+      "id": "e5000000-0000-4000-8000-000000000021",
+      "name": "Send Redraft Photo"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Give Gemini the current time so it can resolve 'now' / 'tomorrow 9am' etc.\nconst s = $json;\nreturn [{ json: { chatId: s.chatId, phrase: s.userText || '', nowIso: new Date().toISOString() } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2480, 980],
+      "id": "e5000000-0000-4000-8000-000000000022",
+      "name": "Prep Time"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [ { parts: [ { text: \"Current UTC time is \" + $('Prep Time').item.json.nowIso + \". The user is in Africa/Nairobi (UTC+3, no daylight saving). Interpret this scheduling instruction: \\\"\" + ($('Prep Time').item.json.phrase || \"\") + \"\\\".\\n\\nReturn ONLY minified JSON. If they mean immediately/right now, return {\\\"mode\\\":\\\"now\\\"}. Otherwise return {\\\"mode\\\":\\\"schedule\\\",\\\"iso\\\":\\\"YYYY-MM-DDTHH:MM:SS+03:00\\\"} using the intended LOCAL Nairobi time. No prose, no code fences.\" } ] } ] }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2680, 980],
+      "id": "e5000000-0000-4000-8000-000000000023",
+      "name": "Gemini Parse Time",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YzQkTv2OYztQx7p6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini's JSON verdict -> post now, or push to the SAME scheduledPosts queue.\nlet txt = '';\ntry { txt = $json.candidates[0].content.parts[0].text || ''; } catch (e) {}\ntxt = txt.replace(/```json/gi, '').replace(/```/g, '').trim();\nlet parsed = { mode: 'schedule' };\ntry { parsed = JSON.parse(txt); } catch (e) {}\nconst p = $('Prep Time').item.json;\nconst sd = $getWorkflowStaticData('global'); if (!sd.ipDrafts) sd.ipDrafts = {};\nconst prior = sd.ipDrafts[p.chatId] || {};\nconst draftText = prior.draftText || '', photoFileId = prior.photoFileId || '', notes = prior.notes || '';\nif (parsed.mode === 'now') {\n  sd.ipDrafts[p.chatId] = Object.assign({}, prior, { status: 'posted', chatId: p.chatId });\n  return [{ json: { chatId: p.chatId, mode: 'now', status: 'posted', notes, draftText, photoFileId, label: 'now' } }];\n}\nlet t = Date.parse(parsed.iso);\nif (isNaN(t)) { t = Date.now() + 3600000; }               // unparseable -> +1h fallback\nconst goLiveISO = new Date(t).toISOString();\nif (!Array.isArray(sd.scheduledPosts)) sd.scheduledPosts = [];\nconst id = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;\nsd.scheduledPosts.push({ id, postText: draftText, fileId: photoFileId, goLiveISO, posted: false });\nsd.ipDrafts[p.chatId] = Object.assign({}, prior, { status: 'scheduled', chatId: p.chatId });\nconst EAT = 3 * 60 * 60 * 1000;\nconst days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];\nconst mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\nconst w = new Date(t + EAT);\nconst label = `${days[w.getUTCDay()]} ${String(w.getUTCDate()).padStart(2,'0')} ${mons[w.getUTCMonth()]} ${String(w.getUTCHours()).padStart(2,'0')}:${String(w.getUTCMinutes()).padStart(2,'0')}`;\nreturn [{ json: { chatId: p.chatId, mode: 'schedule', status: 'scheduled', notes, draftText, photoFileId, goLiveISO, label } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 980],
+      "id": "e5000000-0000-4000-8000-000000000024",
+      "name": "Resolve Time"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "now",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3080, 980],
+      "id": "e5000000-0000-4000-8000-000000000025",
+      "name": "Route: now or schedule?"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $('Resolve Time').item.json.photoFileId }}",
+        "download": true
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3300, 900],
+      "id": "e5000000-0000-4000-8000-000000000026",
+      "name": "Download Photo Now",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "postAs": "person",
+        "person": "",
+        "text": "={{ $('Resolve Time').item.json.draftText }}",
+        "shareMediaCategory": "IMAGE",
+        "binaryPropertyName": "data",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [3520, 900],
+      "id": "e5000000-0000-4000-8000-000000000027",
+      "name": "Post Now Image",
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "LinkedIn account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "QyA17fWJpqyKDrPy",
+          "cachedResultName": "linkedin_drafts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatId": "={{ String($('Resolve Time').item.json.chatId) }}",
+            "status": "={{ $('Resolve Time').item.json.status }}",
+            "notes": "={{ $('Resolve Time').item.json.notes }}",
+            "draftText": "={{ $('Resolve Time').item.json.draftText }}",
+            "photoFileId": "={{ $('Resolve Time').item.json.photoFileId }}"
+          },
+          "matchingColumns": ["chatId"],
+          "schema": [
+            {
+              "id": "chatId",
+              "displayName": "chatId",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "draftText",
+              "displayName": "draftText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "photoFileId",
+              "displayName": "photoFileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [3740, 860],
+      "id": "e5000000-0000-4000-8000-000000000028",
+      "name": "DT Save Posted"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Resolve Time').item.json.chatId }}",
+        "text": "=✅ Now live on LinkedIn.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3960, 860],
+      "id": "e5000000-0000-4000-8000-000000000029",
+      "name": "Reply Now Live IP",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Resolve Time').item.json.chatId }}",
+        "text": "={{ '⚠️ Post failed:\\n' + ($json.error && $json.error.message ? $json.error.message : JSON.stringify($json.error || $json)) }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3740, 1060],
+      "id": "e5000000-0000-4000-8000-000000000030",
+      "name": "IP Post Error",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "QyA17fWJpqyKDrPy",
+          "cachedResultName": "linkedin_drafts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatId": "={{ String($('Resolve Time').item.json.chatId) }}",
+            "status": "={{ $('Resolve Time').item.json.status }}",
+            "notes": "={{ $('Resolve Time').item.json.notes }}",
+            "draftText": "={{ $('Resolve Time').item.json.draftText }}",
+            "photoFileId": "={{ $('Resolve Time').item.json.photoFileId }}"
+          },
+          "matchingColumns": ["chatId"],
+          "schema": [
+            {
+              "id": "chatId",
+              "displayName": "chatId",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "draftText",
+              "displayName": "draftText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "photoFileId",
+              "displayName": "photoFileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [3300, 1080],
+      "id": "e5000000-0000-4000-8000-000000000031",
+      "name": "DT Save Scheduled"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Resolve Time').item.json.chatId }}",
+        "text": "=✅ Scheduled — going live {{ $('Resolve Time').item.json.label }} (EAT).",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3520, 1080],
+      "id": "e5000000-0000-4000-8000-000000000032",
+      "name": "Reply Scheduled IP",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Edit / Post button -> set the follow-up state and the prompt to send.\nconst s = $json;\nconst sd = $getWorkflowStaticData('global'); if (!sd.ipDrafts) sd.ipDrafts = {};\nconst prior = sd.ipDrafts[s.chatId] || {};\nconst isEdit = s.kind === 'cbedit';\nconst status = isEdit ? 'awaiting_edit' : 'awaiting_time';\nconst prompt = isEdit\n  ? '✏️ Send your changes (type or voice note).'\n  : \"🕒 When should it go live? (e.g. 'now', 'tomorrow 9am', 'Thu 2pm').\";\nsd.ipDrafts[s.chatId] = Object.assign({}, prior, { status, chatId: s.chatId });\nreturn [{ json: { chatId: s.chatId, status, notes: prior.notes || '', draftText: prior.draftText || '', photoFileId: prior.photoFileId || '', prompt } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1220, 460],
+      "id": "e5000000-0000-4000-8000-000000000033",
+      "name": "Prep CB"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "QyA17fWJpqyKDrPy",
+          "cachedResultName": "linkedin_drafts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatId": "={{ String($('Prep CB').item.json.chatId) }}",
+            "status": "={{ $('Prep CB').item.json.status }}",
+            "notes": "={{ $('Prep CB').item.json.notes }}",
+            "draftText": "={{ $('Prep CB').item.json.draftText }}",
+            "photoFileId": "={{ $('Prep CB').item.json.photoFileId }}"
+          },
+          "matchingColumns": ["chatId"],
+          "schema": [
+            {
+              "id": "chatId",
+              "displayName": "chatId",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "draftText",
+              "displayName": "draftText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "photoFileId",
+              "displayName": "photoFileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [1440, 460],
+      "id": "e5000000-0000-4000-8000-000000000034",
+      "name": "DT Save CB"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Prep CB').item.json.chatId }}",
+        "text": "={{ $('Prep CB').item.json.prompt }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1640, 460],
+      "id": "e5000000-0000-4000-8000-000000000035",
+      "name": "Prompt CB",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 15s": {
+      "main": [
+        [
+          {
+            "node": "Delete Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Offset": {
+      "main": [
+        [
+          {
+            "node": "Get Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Updates": {
+      "main": [
+        [
+          {
+            "node": "Process Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Updates": {
+      "main": [
+        [
+          {
+            "node": "Route by Kind",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: image?": {
+      "main": [
+        [
+          {
+            "node": "Schedule Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route: text or topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: text or topics": {
+      "main": [
+        [
+          {
+            "node": "Post Text to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Post": {
+      "main": [
+        [
+          {
+            "node": "Reply Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Topics": {
+      "main": [
+        [
+          {
+            "node": "Reply Topics Saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Text to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback": {
+      "main": [
+        [
+          {
+            "node": "Mark Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish every 15m": {
+      "main": [
+        [
+          {
+            "node": "Scan Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Queue": {
+      "main": [
+        [
+          {
+            "node": "Route: publish or cancel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: publish or cancel": {
+      "main": [
+        [
+          {
+            "node": "Download Scheduled Photo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cancel Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Scheduled Photo": {
+      "main": [
+        [
+          {
+            "node": "Publish Image to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Image to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Mark Item Posted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publish Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Item Posted": {
+      "main": [
+        [
+          {
+            "node": "Now Live",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Kind": {
+      "main": [
+        [
+          {
+            "node": "Prep CB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route: has voice?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route: image?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep CB": {
+      "main": [
+        [
+          {
+            "node": "DT Save CB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DT Save CB": {
+      "main": [
+        [
+          {
+            "node": "Prompt CB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: has voice?": {
+      "main": [
+        [
+          {
+            "node": "Download Voice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notes from Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Voice": {
+      "main": [
+        [
+          {
+            "node": "Voice to B64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voice to B64": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Voice": {
+      "main": [
+        [
+          {
+            "node": "Notes from Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notes from Voice": {
+      "main": [
+        [
+          {
+            "node": "Route IP Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notes from Text": {
+      "main": [
+        [
+          {
+            "node": "Route IP Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route IP Action": {
+      "main": [
+        [
+          {
+            "node": "Prep Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep Await",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep Redraft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Draft": {
+      "main": [
+        [
+          {
+            "node": "Gemini Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Draft": {
+      "main": [
+        [
+          {
+            "node": "Save Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Draft": {
+      "main": [
+        [
+          {
+            "node": "DT Save Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DT Save Draft": {
+      "main": [
+        [
+          {
+            "node": "Send Draft Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Await": {
+      "main": [
+        [
+          {
+            "node": "DT Save Await",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DT Save Await": {
+      "main": [
+        [
+          {
+            "node": "Ask Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Redraft": {
+      "main": [
+        [
+          {
+            "node": "Gemini Redraft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Redraft": {
+      "main": [
+        [
+          {
+            "node": "Save Redraft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Redraft": {
+      "main": [
+        [
+          {
+            "node": "DT Save Redraft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DT Save Redraft": {
+      "main": [
+        [
+          {
+            "node": "Send Redraft Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Time": {
+      "main": [
+        [
+          {
+            "node": "Gemini Parse Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Parse Time": {
+      "main": [
+        [
+          {
+            "node": "Resolve Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Time": {
+      "main": [
+        [
+          {
+            "node": "Route: now or schedule?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: now or schedule?": {
+      "main": [
+        [
+          {
+            "node": "Download Photo Now",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DT Save Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Photo Now": {
+      "main": [
+        [
+          {
+            "node": "Post Now Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Now Image": {
+      "main": [
+        [
+          {
+            "node": "DT Save Posted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IP Post Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DT Save Posted": {
+      "main": [
+        [
+          {
+            "node": "Reply Now Live IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DT Save Scheduled": {
+      "main": [
+        [
+          {
+            "node": "Reply Scheduled IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Nairobi"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d4117ed9cb08c0a91a0bdcccd08aa06dda1d9bfaa982caee29f6239c89d540e"
+  },
+  "tags": []
+}

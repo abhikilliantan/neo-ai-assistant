@@ -1,14 +1,16 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Mic, Paperclip, Send, Sparkles, User } from "lucide-react";
+import { History, Mic, Paperclip, Send, Sparkles, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Agent, ChatMessage, ToolInvocation } from "@neo/shared-types";
+import { MobileDrawer } from "@/components/layout/mobile-drawer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
+import { useUiStore } from "@/store/ui";
 import { listAgents } from "@/services/agents";
 // TODO: restore streaming once streaming+tools is wired. `streamChat` is kept
 // in services/chat.ts and returns here then; the chat UI routes through the
@@ -56,6 +58,12 @@ export function ChatView() {
   }, [agentsQuery.data]);
   const selectedAgentMeta =
     agents.find((a) => a.name === selectedAgent) ?? agents[0] ?? DEFAULT_AGENT;
+
+  // Mobile-only (< md) conversation-history drawer. On md+ the fixed w-72 rail
+  // stays and these are unused.
+  const conversationDrawerOpen = useUiStore((s) => s.conversationDrawerOpen);
+  const openConversationDrawer = useUiStore((s) => s.openConversationDrawer);
+  const closeConversationDrawer = useUiStore((s) => s.closeConversationDrawer);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -192,7 +200,46 @@ export function ChatView() {
         }}
       />
 
+      {/* Mobile-only: the same conversation list inside a slide-over drawer.
+          Selecting a thread or starting a new chat closes the drawer. */}
+      <MobileDrawer
+        open={conversationDrawerOpen}
+        onClose={closeConversationDrawer}
+        label="Conversations"
+        side="left"
+      >
+        <ConversationSidebar
+          className="flex h-full w-full flex-col gap-3 p-3"
+          activeConversationId={activeConversationId}
+          onNewChat={() => {
+            startNewChat();
+            closeConversationDrawer();
+          }}
+          onSelect={(id) => {
+            void loadConversation(id);
+            closeConversationDrawer();
+          }}
+          onDeleted={(id) => {
+            if (id === activeConversationId) startNewChat();
+          }}
+        />
+      </MobileDrawer>
+
       <div className="flex min-w-0 flex-1 flex-col gap-4">
+        {/* Mobile-only entry point to past conversations — the w-72 rail is
+            hidden < md, so this opens the same list in a slide-over drawer. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={openConversationDrawer}
+          aria-label="Show conversation history"
+          className="h-11 w-fit gap-2 md:hidden"
+        >
+          <History className="h-4 w-4" />
+          Conversations
+        </Button>
+
         <div className="glass min-h-0 flex-1 overflow-hidden rounded-card shadow-glow">
           <div ref={scrollRef} className="h-full overflow-auto p-4 md:p-6">
             {loadingHistory ? (
@@ -252,7 +299,7 @@ export function ChatView() {
               // meta.agent label ambiguous about which agent produced the text.
               disabled={streaming || loadingHistory}
               className={cn(
-                "rounded-control border border-input bg-glass px-2 py-1 text-sm text-foreground",
+                "max-w-full min-w-0 rounded-control border border-input bg-glass px-2 py-1 text-sm text-foreground",
                 "focus:outline-none focus:ring-2 focus:ring-accent/40",
                 "disabled:cursor-not-allowed disabled:opacity-50",
               )}
@@ -268,6 +315,8 @@ export function ChatView() {
             </span>
           </div>
 
+          {/* Composer controls are 44px (h-11/w-11) on mobile for comfortable
+              touch targets, reverting to the desktop 40px (h-10) at md+. */}
           <form className="flex items-center gap-2" onSubmit={onSend}>
             <Button
               type="button"
@@ -276,6 +325,7 @@ export function ChatView() {
               disabled
               title="Attachments (coming soon)"
               aria-label="Attach a file (coming soon)"
+              className="h-11 w-11 shrink-0 md:h-10 md:w-10"
             >
               <Paperclip className="h-4 w-4" />
             </Button>
@@ -285,7 +335,7 @@ export function ChatView() {
               placeholder="Ask anything…"
               aria-label="Message"
               disabled={streaming || loadingHistory}
-              className="flex-1"
+              className="h-11 min-w-0 flex-1 md:h-10"
             />
             <Button
               type="button"
@@ -294,6 +344,7 @@ export function ChatView() {
               disabled
               title="Voice input (coming soon)"
               aria-label="Voice input (coming soon)"
+              className="h-11 w-11 shrink-0 md:h-10 md:w-10"
             >
               <Mic className="h-4 w-4" />
             </Button>
@@ -303,6 +354,7 @@ export function ChatView() {
               size="icon"
               disabled={streaming || loadingHistory || draft.trim() === ""}
               aria-label="Send message"
+              className="h-11 w-11 shrink-0 md:h-10 md:w-10"
             >
               <Send className="h-4 w-4" />
             </Button>

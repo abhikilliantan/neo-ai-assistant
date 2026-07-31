@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "@/styles/globals.css";
 import { Providers } from "@/app/providers";
 import { env } from "@/lib/env";
@@ -6,6 +6,15 @@ import { env } from "@/lib/env";
 export const metadata: Metadata = {
   title: env.appName,
   description: "Enterprise AI Operating System",
+};
+
+// viewportFit "cover" is what makes env(safe-area-inset-*) resolve to real
+// values on notched iPhones (used by the shell + composer). Zoom is left
+// enabled for accessibility.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

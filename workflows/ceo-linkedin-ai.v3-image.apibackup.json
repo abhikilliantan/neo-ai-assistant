@@ -1,0 +1,401 @@
+{
+  "name": "CEO LinkedIn AI - Weekly 15 (Image + Approve)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [5],
+              "triggerAtHour": 16,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "id": "b1000000-0000-4000-8000-000000000001",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"api_key\": \"{{ $env.TAVILY_API_KEY }}\",\n  \"query\": \"enterprise AI, AI strategy, SAP S/4HANA, SAP Joule, ERP modernization, digital transformation, paperless operations, predictive analytics, business automation, HR technology, future of work, African emerging-market enterprise transformation\",\n  \"days\": 7,\n  \"search_depth\": \"advanced\",\n  \"max_results\": 25,\n  \"include_answer\": true,\n  \"include_raw_content\": false\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [208, 0],
+      "id": "b1000000-0000-4000-8000-000000000002",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const articles = [];\n\nfor (const item of $input.all()) {\n  const results = item.json.results || [];\n\n  for (const article of results) {\n    articles.push({\n      title: article.title,\n      url: article.url,\n      summary: (article.content || \"\").substring(0, 300),\n    });\n  }\n}\n\nreturn [\n  {\n    json: {\n      articles,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [416, 32],
+      "id": "b1000000-0000-4000-8000-000000000003",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# ==============================================================================\n# WEEKLY LINKEDIN CONTENT ENGINE\n# Skillmind Software Ltd  —  Voice of Abhishek (CEO & Founder)\n# Version 1.0  —  15 posts (Mon-Fri x 3 options) for next week\n# ==============================================================================\n\n## WHO YOU ARE WRITING AS\nYou write in the FIRST PERSON as Abhishek, CEO & Founder of Skillmind Software,\n\"Africa's AI, ERP & Digital Transformation Leader.\"\nAbhishek is an AI generalist who builds AI solutions for ANY business gap or\nautomation need. Flagship products: HRGenie (HR) and SAP S/4HANA + Joule.\nTone: founder conviction, calm authority, first person, zero fluff.\n\n## YOUR JOB\nFrom the INPUT ARTICLES, produce EXACTLY 15 short LinkedIn post options for\nNEXT WEEK: 5 weekday slots (Monday, Tuesday, Wednesday, Thursday, Friday),\neach with 3 DISTINCT options (option 1, 2, 3). 5 x 3 = 15.\nEach of the 15 must be built from a real item in the INPUT ARTICLES and carry\nthat item's exact title and url as its source.\n\n## THE FIVE CONTENT PILLARS (spread coverage across these)\n1. Enterprise AI & AI strategy\n2. SAP S/4HANA & Joule / ERP modernization\n3. Digital transformation (paperless, predictive, profitable operations)\n4. HR technology & future of work\n5. African / emerging-market enterprise transformation\nUse different articles/angles so the 15 posts feel varied, not repetitive.\n\n## POST STYLE — FOLLOW EXACTLY\n- LENGTH: 8-10 LINES MAX. Punchy, scannable, heavy white space, ONE idea per line.\n  These are NOT essays. Short fragments beat full sentences.\n- STRUCTURE of every post:\n  (a) HOOK: a contrarian / pattern-interrupt opening line that stops the scroll.\n  (b) DEVELOPMENT: the real-world development in 2-4 crisp lines or arrow bullets.\n      Prefer arrow bullets starting with an arrow. One idea per line.\n  (c) INSIGHT: ONE sharp, quotable line that reframes the problem.\n  (d) QUESTION: a CXO-level question as the call to action (never yes/no).\n  (e) HASHTAGS: 4-6 relevant hashtags.\n- AUDIENCE: written to grab CXO / CIO / CMO attention. Informative, idea-driven,\n  engineered to go viral in enterprise AI / HR / SAP circles.\n\n## EMULATE THIS PROVEN EXEMPLAR'S DNA (just shorter)\nAbhishek's own 1,057-impression post did this:\n  - Opened with a pattern-interrupt: \"Most people think Skillmind is an HR\n    software company. We are not.\"\n  - Punchy fragments, lots of white space.\n  - Arrow bullets listing the AI ecosystem.\n  - A reframe line: \"It wasn't a lack of technology. It was a lack of execution.\"\n  - A CXO question CTA: \"What are you still solving manually in 2026?\n    Drop it in the comments.\"\nMatch that rhythm and energy. Do not copy its words; create fresh ones.\n\n## HARD GUARDRAIL — NON-NEGOTIABLE\nALWAYS pro-AI, pro-HR-tech, pro-SAP, pro-automation, pro-Skillmind.\nNEVER write anything against, skeptical of, fearful of, or critical of AI, HR\ntechnology, SAP, automation, or Abhishek's sector. No anti-AI or doom takes,\nno job-loss fear framing. Frame EVERY challenge as an opportunity that\nSkillmind-type solutions solve. Optimism with substance.\n\n## FACTUAL DISCIPLINE\nEvery fact must come from the selected article. No invented statistics, quotes,\nor URLs. source_title and source_url must be copied verbatim from the article\nyou used.\n\n## IMAGE BRIEF (per post)\nFor EACH post also produce fields that brief a Fortune-500 executive image:\n- visual_metaphor: ONE concrete premium business metaphor. Elegant AI only (floating glass interfaces, holographic workflows, data streams, enterprise command centers) — NEVER cartoon robots, toy robots, sci-fi androids, cute AI.\n- headline: OPTIONAL, 3-6 words max, or \"\" if none. Keep image text minimal.\n- statistic: OPTIONAL, one short stat drawn from the article, or \"\" if none.\n- callouts: 0-3 very short label phrases (hard max 3). Fewer is better.\n- industry: the primary industry (HR, Finance, Manufacturing, Government, Enterprise Technology, etc.).\nKeep every brief strictly pro-AI, pro-HR-tech, pro-SAP, pro-automation, pro-Skillmind.\n\n## OUTPUT REQUIREMENTS\nReturn ONLY a valid JSON object. No markdown, no ```json, no comments, no text\nbefore or after. First character MUST be { and last MUST be }.\nIt MUST match this shape exactly:\n{\n  \"posts\": [\n    {\n      \"day\": \"Monday\",\n      \"option\": 1,\n      \"hook\": \"one contrarian scroll-stopping line\",\n      \"development\": [\"arrow-bullet line 1\", \"arrow-bullet line 2\"],\n      \"insight\": \"one sharp quotable reframe\",\n      \"question\": \"a CXO-level open question\",\n      \"hashtags\": [\"#EnterpriseAI\", \"#SAP\", \"#HRTech\", \"#DigitalTransformation\"],\n      \"source_title\": \"exact article title\",\n      \"source_url\": \"exact article url\",\n      \"visual_metaphor\": \"secure payroll data flowing through a glass command center\",\n      \"headline\": \"\" ,\n      \"statistic\": \"\",\n      \"callouts\": [\"Automated\", \"Governed\", \"Real-time\"],\n      \"industry\": \"HR\"\n    }\n    // ... exactly 15 items: Monday 1-3, Tuesday 1-3, Wednesday 1-3, Thursday 1-3, Friday 1-3\n  ]\n}\n\nINPUT ARTICLES\n\n{{ JSON.stringify($json.articles, null, 2) }}",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [624, 32],
+      "id": "b1000000-0000-4000-8000-000000000004",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [560, 260],
+      "id": "b1000000-0000-4000-8000-000000000005",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YzQkTv2OYztQx7p6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"posts\": {\n      \"type\": \"array\",\n      \"minItems\": 15,\n      \"maxItems\": 15,\n      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"properties\": {\n          \"day\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"Monday\",\n              \"Tuesday\",\n              \"Wednesday\",\n              \"Thursday\",\n              \"Friday\"\n            ]\n          },\n          \"option\": {\n            \"type\": \"integer\",\n            \"minimum\": 1,\n            \"maximum\": 3\n          },\n          \"hook\": {\n            \"type\": \"string\"\n          },\n          \"development\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\"\n            },\n            \"minItems\": 2,\n            \"maxItems\": 4\n          },\n          \"insight\": {\n            \"type\": \"string\"\n          },\n          \"question\": {\n            \"type\": \"string\"\n          },\n          \"hashtags\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\"\n            },\n            \"minItems\": 4,\n            \"maxItems\": 6\n          },\n          \"source_title\": {\n            \"type\": \"string\"\n          },\n          \"source_url\": {\n            \"type\": \"string\"\n          },\n          \"visual_metaphor\": {\n            \"type\": \"string\"\n          },\n          \"headline\": {\n            \"type\": \"string\"\n          },\n          \"statistic\": {\n            \"type\": \"string\"\n          },\n          \"callouts\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\"\n            },\n            \"minItems\": 0,\n            \"maxItems\": 3\n          },\n          \"industry\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"day\",\n          \"option\",\n          \"hook\",\n          \"development\",\n          \"insight\",\n          \"question\",\n          \"hashtags\",\n          \"source_title\",\n          \"source_url\",\n          \"visual_metaphor\",\n          \"callouts\",\n          \"industry\"\n        ]\n      }\n    }\n  },\n  \"required\": [\n    \"posts\"\n  ]\n}",
+        "autoFix": true
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [880, 280],
+      "id": "b1000000-0000-4000-8000-000000000006",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per post: context (label+source, no button), post (EXACT LinkedIn text),\n// imagePrompt = master executive image prompt (style base) + this post's filled Section 19.\nconst MASTER = `# Master Executive LinkedIn Image Generator Prompt v2.1\n\n## 1. CONTEXT\n\nYou are the Creative Director leading an elite enterprise branding studio combining the design excellence of Pentagram, IDEO, Apple Design, Deloitte Digital, McKinsey Design Lab, Microsoft Design, IBM Experience Design, NVIDIA Creative Studio, and Accenture Song.\n\nYou specialize in designing premium executive visuals for Fortune 500 companies.\n\nYour work regularly appears in publications comparable to:\n\n- Harvard Business Review\n- McKinsey Quarterly\n- Deloitte Insights\n- Gartner Research\n- IBM Think\n- Microsoft AI\n- NVIDIA Enterprise\n- World Economic Forum\n- Fortune Magazine\n- Bloomberg Businessweek\n\nEvery image should look like an expensive executive campaign—not a social media graphic.\n\n---\n\n## 2. OBJECTIVE\n\nCreate a single cinematic business visual that communicates one powerful business idea in less than three seconds.\n\nThe viewer should instantly understand:\n\n- What is happening?\n- Why does it matter?\n- Why should I continue reading?\n\nThe image must create curiosity before explanation.\n\n---\n\n## 3. TARGET AUDIENCE\n\nDesign exclusively for enterprise decision-makers:\n\n- CEOs\n- CIOs\n- CTOs\n- CHROs\n- CFOs\n- Board Members\n- Enterprise Architects\n- HR Directors\n- Payroll Leaders\n- Digital Transformation Directors\n- SAP Executives\n- Oracle Executives\n- Workday Leaders\n- Microsoft Executives\n- Government Technology Leaders\n\nEvery design should respect executive aesthetics.\n\n---\n\n## 4. VISUAL STORYTELLING FRAMEWORK\n\nCurrent State\n\n↓\n\nBusiness Challenge\n\n↓\n\nAI Transformation\n\n↓\n\nExecutive Control\n\n↓\n\nBusiness Value\n\n↓\n\nFuture Enterprise\n\nShow the story visually. Do not rely on paragraphs.\n\n---\n\n## 5. ART DIRECTION\n\n- Ultra Photorealistic\n- Hollywood Cinematic\n- Luxury Corporate Photography\n- Editorial Magazine Cover\n- Premium Enterprise Branding\n- Apple Keynote Quality\n- Fortune 500 Campaign\n- Studio Photography\n- Architectural Photography\n\n---\n\n## 6. ENVIRONMENT\n\nUse premium enterprise environments such as:\n\n- Executive boardrooms\n- Global headquarters\n- Innovation labs\n- AI mission control centers\n- Enterprise command rooms\n- Premium glass offices\n- Digital operation centers\n- Financial trading floors\n- Executive strategy rooms\n- Modern cloud infrastructure centers\n\n---\n\n## 7. HUMAN ELEMENT\n\nAlways include realistic executives.\n\n- Senior leadership\n- Authentic expressions\n- Executive attire\n- Strategic thinking\n- Collaboration\n- Decision-making\n- Leadership presence\n\nAvoid generic stock-photo poses.\n\n---\n\n## 8. AI VISUALIZATION\n\nNever use:\n\n- Cartoon robots\n- Cute AI\n- Toy robots\n- Sci-fi androids\n- Gaming aesthetics\n\nInstead represent AI using:\n\n- Floating glass interfaces\n- Holographic workflows\n- Neural networks\n- Intelligent data streams\n- Digital workforce\n- Enterprise operating system\n- Strategic intelligence engine\n\n---\n\n## 9. BUSINESS METAPHORS\n\nExamples:\n\n- Payroll → Secure financial data flowing intelligently\n- Governance → Executive approval checkpoints\n- AI Agent → Enterprise command center\n- Transformation → Bridge from legacy to intelligent enterprise\n- Growth → Connected enterprise ecosystem\n\n---\n\n## 10. COMPOSITION\n\n- Strong hero subject\n- Clear focal point\n- Balanced negative space\n- Premium framing\n- Symmetry\n- Layered depth\n- Editorial layout\n- Natural reflections\n- Cinematic perspective\n\n---\n\n## 11. LIGHTING\n\n- Natural daylight\n- Soft studio lighting\n- Architectural lighting\n- Volumetric light (when appropriate)\n- Premium ambient lighting\n- Realistic shadows\n- Glass reflections\n\nAvoid excessive glow and gaming effects.\n\n---\n\n## 12. COLOR PALETTE & VISUAL MOOD\n\nDo **not** default to black backgrounds.\n\nChoose the background based on the business story.\n\n### Executive White\n- White\n- Ivory\n- Frosted glass\n- Light silver\n- Bright executive offices\n\n### Corporate Light\n- Pearl white\n- Platinum\n- Soft grey\n- Scandinavian architecture\n\n### Premium Dark\n- Graphite\n- Charcoal\n- Deep navy\n- Matte black\n\n### Business Blue\n- Corporate navy\n- Royal blue\n- Steel blue\n- Azure gradients\n\n### Industry Themes\n\n- Healthcare → White + Teal\n- Finance → Navy + Silver\n- Manufacturing → Steel Grey\n- HR → White + Soft Blue\n- Sustainability → White + Green Accents\n- Government → White + Navy\n\n---\n\n## 13. DYNAMIC COLOR STRATEGY\n\nMatch color to the story:\n\n- Innovation → White, glass, blue highlights\n- Trust → Navy and silver\n- AI → Glass, cyan, subtle gradients\n- Growth → Bright white with blue accents\n- Security → Graphite with illuminated interfaces\n- Transformation → Light-to-dark transition\n- Collaboration → Warm executive lighting\n\n---\n\n## 14. MATERIALS\n\nUse premium architectural materials:\n\n- Glass\n- Brushed aluminum\n- Marble\n- Premium wood\n- Steel\n- Carbon fiber\n- Concrete\n- Polished stone\n\nAvoid cheap plastic textures.\n\n---\n\n## 15. BACKGROUND VARIETY\n\nRotate naturally between:\n\n- White executive offices\n- Modern headquarters\n- Luxury boardrooms\n- Glass skyscrapers\n- Innovation labs\n- AI command centers\n- Financial trading floors\n- Premium conference spaces\n- Airport executive lounges\n- Technology campuses\n- Architectural interiors\n- Minimal studios\n\nNever repeat the same black background style.\n\n---\n\n## 16. TYPOGRAPHY\n\nMaximum:\n\n- One headline\n- One statistic\n- Three callouts\n\nKeep typography minimal and premium.\n\n---\n\n## 17. IMAGE QUALITY\n\n- Ultra HD\n- Photorealistic\n- Editorial photography\n- Fortune 500 campaign quality\n- Luxury advertising\n- High dynamic range\n- Macro textures\n- Real skin\n- Real glass\n- Premium reflections\n- Cinematic depth of field\n\n---\n\n## 18. LINKEDIN OPTIMIZATION\n\nThe image should:\n\n- Stop scrolling\n- Create curiosity\n- Increase reading time\n- Encourage shares\n- Encourage saves\n- Position the author as a thought leader\n\n---\n\n## 19. INPUT VARIABLES\n\nReplace before generation:\n\n- **Topic:** [Main business topic]\n- **Core Message:** [Key takeaway]\n- **Visual Metaphor:** [Business metaphor]\n- **Headline:** [Optional]\n- **Statistic:** [Optional]\n- **Callouts:** [Max 3]\n- **Industry:** [Industry]\n- **Brand Colors:** [Optional]\n- **Aspect Ratio:** [1:1 | 4:5 | 16:9]\n\n---\n\n## 20. FINAL QUALITY GATE\n\nVerify before generating:\n\n- Looks like a Fortune 500 campaign.\n- Worthy of McKinsey, Apple, Microsoft, Deloitte, or HBR.\n- Business message understood within three seconds.\n- Elegant AI representation.\n- Premium color palette chosen for the story.\n- No repetitive black backgrounds.\n- CEO-worthy visual suitable for LinkedIn thought leadership.\n\nIf any answer is **No**, refine the image until it meets executive publication quality.`;\n\nconst order = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5 };\nconst posts = ($input.first().json.output && $input.first().json.output.posts) || [];\nconst sorted = [...posts].sort((a, b) => {\n  const da = order[String(a.day || '').toLowerCase()] || 99;\n  const db = order[String(b.day || '').toLowerCase()] || 99;\n  return da - db || (Number(a.option) || 0) - (Number(b.option) || 0);\n});\n\nreturn sorted.map((p) => {\n  const day = String(p.day || '').toUpperCase();\n  const opt = p.option != null ? p.option : '?';\n  const dev = Array.isArray(p.development) ? p.development : (p.development ? [p.development] : []);\n  const devLines = dev.map((l) => {\n    const t = String(l).trim();\n    return /^(\\u2192|\\u2022|-|\\*)/.test(t) ? t : '\\u2192 ' + t;\n  }).join('\\n');\n  const tags = Array.isArray(p.hashtags) ? p.hashtags.join(' ') : (p.hashtags || '');\n  const post = [p.hook, '', devLines, '', p.insight, '', p.question, '', tags]\n    .join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();\n  const context = `\\ud83d\\udcc5 ${day} \\u2014 Option ${opt} of 3\\nSource: ${p.source_title || ''} \\u2014 ${p.source_url || ''}`;\n\n  // ---- fill the master prompt's Section 19 INPUT VARIABLES from this post ----\n  const callouts = (Array.isArray(p.callouts) ? p.callouts : []).slice(0, 3);\n  const inputVars = [\n    '## FILLED INPUT VARIABLES (use these; they REPLACE the Section 19 placeholders)',\n    '- Topic: ' + (p.source_title || day),\n    '- Core Message: ' + (p.insight || p.hook || ''),\n    '- Visual Metaphor: ' + (p.visual_metaphor || 'elegant AI: floating glass interfaces and intelligent data streams in an enterprise command center'),\n    '- Headline: ' + (p.headline ? p.headline : '(none - keep image text minimal)'),\n    '- Statistic: ' + (p.statistic ? p.statistic : '(none)'),\n    '- Callouts: ' + (callouts.length ? callouts.join(' | ') : '(none)'),\n    '- Industry: ' + (p.industry || 'Enterprise Technology'),\n    '- Brand Colors: Skillmind executive palette: white + soft corporate blue, premium, never default black',\n    '- Aspect Ratio: 1:1',\n  ].join('\\n');\n\n  const enforce = [\n    '## HARD ENFORCEMENT',\n    '- Minimal text only: at most ONE headline + ONE statistic + up to THREE callouts. No paragraphs, no gibberish text, no watermark.',\n    '- Ultra-photorealistic Fortune-500 executive campaign quality. Real executives, real glass, premium materials.',\n    '- Represent AI elegantly (glass/holographic interfaces, neural/data streams). NEVER cartoon robots, toy robots, androids, cute AI.',\n    '- Strictly pro-AI, pro-HR-tech, pro-SAP, pro-automation, pro-Skillmind. Optimistic and premium, never dystopian.',\n    '- Do NOT default to a black background; choose a premium palette that fits the story (favor white + soft corporate blue).',\n  ].join('\\n');\n\n  const imagePrompt = MASTER + '\\n\\n' + inputVars + '\\n\\n' + enforce;\n\n  return { json: { day, option: p.option, context, post, imagePrompt } };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 32],
+      "id": "c2000000-0000-4000-8000-000000000001",
+      "name": "Prepare Posts"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1240, 32],
+      "id": "c2000000-0000-4000-8000-000000000002",
+      "name": "Loop Over Posts"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "893508401",
+        "text": "={{ $json.context }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1460, -80],
+      "id": "c2000000-0000-4000-8000-000000000003",
+      "name": "Send Context",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-image-1', prompt: $('Loop Over Posts').item.json.imagePrompt, size: '1024x1024', quality: 'high', n: 1 }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1660, 40],
+      "id": "f5000000-0000-4000-8000-000000000001",
+      "name": "Generate Image"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull base64 image from the OpenAI Images API response; build the photo caption.\nconst resp = $input.first().json || {};\nconst b64 = resp && resp.data && resp.data[0] && resp.data[0].b64_json;\nif (!b64) {\n  throw new Error('OpenAI returned no image. Response: ' + JSON.stringify(resp).slice(0, 500));\n}\nconst mime = 'image/png';  // gpt-image-1 returns PNG base64\n\n// FALLBACK for Telegram's 1024-char caption limit: truncate-to-fit at a line/word\n// boundary so the caption stays IDENTICAL to what the listener posts to LinkedIn.\nlet caption = String($('Loop Over Posts').item.json.post || '');\nif (caption.length > 1024) {\n  caption = caption.slice(0, 1020);\n  const cut = Math.max(caption.lastIndexOf('\\n'), caption.lastIndexOf(' '));\n  if (cut > 800) caption = caption.slice(0, cut);\n  caption = caption.trim() + '\\u2026';\n}\nconst ext = 'png';\nreturn [{ json: { imageB64: b64, mime, ext, caption } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1860, 40],
+      "id": "f5000000-0000-4000-8000-000000000002",
+      "name": "Extract Image"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "imageB64",
+        "options": {
+          "fileName": "=linkedin.{{ $json.ext }}",
+          "mimeType": "={{ $json.mime }}"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [2060, 40],
+      "id": "f5000000-0000-4000-8000-000000000003",
+      "name": "To Binary"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendPhoto",
+        "chatId": "893508401",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "additionalFields": {
+          "caption": "={{ $('Extract Image').item.json.caption }}",
+          "appendAttribution": false
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Post to LinkedIn",
+                    "additionalFields": {
+                      "callback_data": "post_li"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2260, 40],
+      "id": "f5000000-0000-4000-8000-000000000004",
+      "name": "Send Photo",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Prepare Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Structured Output Parser",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Posts": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Posts": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Context": {
+      "main": [
+        [
+          {
+            "node": "Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Extract Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Image": {
+      "main": [
+        [
+          {
+            "node": "To Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To Binary": {
+      "main": [
+        [
+          {
+            "node": "Send Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Photo": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2d4117ed9cb08c0a91a0bdcccd08aa06dda1d9bfaa982caee29f6239c89d540e"
+  },
+  "tags": []
+}

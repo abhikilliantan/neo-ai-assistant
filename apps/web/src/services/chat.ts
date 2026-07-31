@@ -6,6 +6,7 @@ import type {
   ChatStreamEvent,
 } from "@neo/shared-types";
 import { env } from "@/lib/env";
+import { requestId } from "@/lib/request-id";
 import { http } from "@/services/http";
 import { clearAndRedirect, refreshOnce } from "@/services/session-refresh";
 import { useSessionStore } from "@/store/session";
@@ -73,7 +74,7 @@ export async function streamChat(
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
-        "X-Request-ID": crypto.randomUUID(),
+        "X-Request-ID": requestId(),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body,

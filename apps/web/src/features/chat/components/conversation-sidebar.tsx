@@ -21,6 +21,10 @@ type Props = {
   // Called after a conversation is deleted so the thread view can clear itself
   // if the deleted one was active.
   onDeleted: (id: string) => void;
+  // Fully REPLACES the wrapper classes (not merged) so this can render either as
+  // the desktop w-72 glass rail (default) or bare inside the mobile drawer,
+  // which already supplies its own glass panel.
+  className?: string;
 };
 
 // Bucket a conversation by its most-recent activity into Today / Yesterday /
@@ -51,6 +55,7 @@ export function ConversationSidebar({
   onNewChat,
   onSelect,
   onDeleted,
+  className,
 }: Props) {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({
@@ -75,7 +80,11 @@ export function ConversationSidebar({
   const groups = data ? groupConversations(data) : [];
 
   return (
-    <aside className="glass flex h-full w-72 flex-col gap-3 rounded-card p-3 shadow-glow">
+    <aside
+      className={
+        className ?? "glass hidden h-full w-72 flex-col gap-3 rounded-card p-3 shadow-glow md:flex"
+      }
+    >
       <Button onClick={onNewChat} variant="gradient" className="w-full">
         <Plus className="h-4 w-4" />
         New chat
