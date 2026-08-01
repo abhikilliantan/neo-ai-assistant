@@ -227,3 +227,50 @@ export type DocumentSearchResult = {
   position: DocumentPosition;
   citation: string;
 };
+
+// --- Neo Command Center overview (mirrors backend /api/v1/companies) ---
+// A node is on_track/needs_attention only when connected to live data;
+// not_connected means no linked dataset → null metrics (never fabricated).
+export type NodeStatus = "on_track" | "needs_attention" | "not_connected";
+
+// GET /api/v1/companies — the company switcher.
+export type CompanySummary = {
+  id: string;
+  name: string;
+};
+
+export type KpiRollup = {
+  active_projects: number;
+  scheduled_this_week: number; // placeholder (0) until the scheduling slice
+  open_actions: number;
+  blocked: number;
+};
+
+export type ProjectOverview = {
+  id: string;
+  name: string;
+  status: NodeStatus;
+  progress_pct: number | null; // 0-100; null when not connected
+  open_actions: number | null;
+  blocked_actions: number | null;
+};
+
+export type DepartmentOverview = {
+  id: string;
+  name: string;
+  icon: string | null; // lucide icon name; frontend maps unknown/null to a default
+  status: NodeStatus;
+  project_count: number;
+  connected_project_count: number;
+  progress_pct: number | null; // avg across connected projects
+  open_actions: number | null;
+  projects: ProjectOverview[];
+};
+
+// GET /api/v1/companies/{id}/overview
+export type CompanyOverview = {
+  company: CompanySummary;
+  updated_at: string; // ISO
+  kpis: KpiRollup;
+  departments: DepartmentOverview[];
+};

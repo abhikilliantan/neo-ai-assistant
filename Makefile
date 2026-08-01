@@ -1,7 +1,7 @@
 # Neo AI Assistant — dev entrypoint
 # Thin wrapper over docker compose + workspace scripts.
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap up down logs ps clean api api-rebuild web fmt lint test precommit migrate migration shell-db create-user create-api-key
+.PHONY: help bootstrap up down logs ps clean api api-rebuild web fmt lint test precommit migrate migration shell-db create-user create-api-key seed-hierarchy
 
 include .env
 export
@@ -63,6 +63,9 @@ create-user:  ## Provision a pilot user+org+owner (usage: make create-user EMAIL
 
 create-api-key:  ## Mint a service API key (usage: make create-api-key ORG=acme-slug NAME="n8n")
 	docker compose exec api python -m scripts.create_api_key --org-slug "$(ORG)" --name "$(NAME)"
+
+seed-hierarchy:  ## Seed the Skillmind company hierarchy (usage: make seed-hierarchy ORG=skillmind-software-ltd)
+	docker compose exec api python -m scripts.seed_hierarchy --org-slug "$(ORG)"
 
 migrate:  ## Apply alembic migrations inside the running api container
 	docker compose exec api alembic upgrade head
