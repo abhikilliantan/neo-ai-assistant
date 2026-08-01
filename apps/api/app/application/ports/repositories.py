@@ -11,14 +11,17 @@ from uuid import UUID
 if TYPE_CHECKING:
     from app.infrastructure.db.models import (
         ApiKey,
+        Company,
         Conversation,
         Dataset,
         DatasetColumn,
+        Department,
         DocumentChunk,
         Membership,
         Memory,
         Message,
         Organization,
+        Project,
         Session,
         User,
         UserPreference,
@@ -211,6 +214,49 @@ class DatasetColumnSpec:
 
 # One row's payload — a mapping from column.key to its cell value (JSON-serializable).
 DatasetRowData = Mapping[str, object]
+
+
+# --- company → department → project hierarchy (Neo Command Center, Slice 1) ---
+
+
+class HierarchyRepositoryPort(Protocol):
+    """Tenant-scoped Company/Department/Project reads + creates. Every method
+    filters organization_id explicitly (the app runs as BYPASSRLS superuser, so
+    RLS is not load-bearing), matching DatasetRepository."""
+
+    async def list_companies(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[Company]: ...
+    async def get_company(self, company_id: UUID) -> Company | None: ...
+    async def list_departments_for_company(
+        self, company_id: UUID, *, active_only: bool = True
+    ) -> list[Department]: ...
+    async def list_projects_for_departments(
+        self, department_ids: Sequence[UUID], *, active_only: bool = True
+    ) -> list[Project]: ...
+    async def create_company(
+        self, *, organization_id: UUID, name: str, created_by: UUID | None = None
+    ) -> Company: ...
+    async def create_department(
+        self,
+        *,
+        organization_id: UUID,
+        company_id: UUID,
+        name: str,
+        icon: str | None = None,
+        position: int = 0,
+    ) -> Department: ...
+    async def create_project(
+        self,
+        *,
+        organization_id: UUID,
+        department_id: UUID,
+        name: str,
+        description: str | None = None,
+        dataset_id: UUID | None = None,
+        status_config: Mapping[str, object] | None = None,
+        position: int = 0,
+    ) -> Project: ...
 
 
 class DatasetRepositoryPort(Protocol):

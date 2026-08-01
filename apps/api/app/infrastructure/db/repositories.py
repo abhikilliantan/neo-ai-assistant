@@ -13,7 +13,7 @@ Caller (dep) owns the transaction; repositories just flush.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -27,16 +27,19 @@ from app.application.ports.documents import DocumentChunk as DocumentChunkVO
 from app.application.ports.repositories import DatasetColumnSpec, DatasetRowData
 from app.infrastructure.db.models import (
     ApiKey,
+    Company,
     Conversation,
     Dataset,
     DatasetColumn,
     DatasetRow,
+    Department,
     Document,
     DocumentChunk,
     Membership,
     Memory,
     Message,
     Organization,
+    Project,
     Role,
     Session,
     User,
@@ -908,3 +911,102 @@ class DatasetRepository:
             .where(DatasetColumn.organization_id == organization_id)
         )
         return result.rowcount or 0  # type: ignore[attr-defined]  # CursorResult at runtime
+
+
+class HierarchyRepository:
+    """Tenant-scoped Company/Department/Project persistence (Neo Command Center,
+    Slice 1). Reads for the Overview endpoint + creates for the seed script. Every
+    list filters organization_id explicitly (NOT RLS) and excludes soft-deleted
+    rows, matching DatasetRepository — the app runs as a BYPASSRLS superuser.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_companies(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[Company]:
+        stmt = select(Company).where(Company.organization_id == organization_id)
+        if active_only:
+            stmt = stmt.where(Company.deleted_at.is_(None))
+        stmt = stmt.order_by(Company.created_at.asc(), Company.id.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_company(self, company_id: UUID) -> Company | None:
+        return await self.session.get(Company, company_id)
+
+    async def list_departments_for_company(
+        self, company_id: UUID, *, active_only: bool = True
+    ) -> list[Department]:
+        stmt = select(Department).where(Department.company_id == company_id)
+        if active_only:
+            stmt = stmt.where(Department.deleted_at.is_(None))
+        stmt = stmt.order_by(
+            Department.position.asc(), Department.created_at.asc(), Department.id.asc()
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_projects_for_departments(
+        self, department_ids: Sequence[UUID], *, active_only: bool = True
+    ) -> list[Project]:
+        """All projects across the given departments in ONE query (avoids the
+        per-department N+1); the caller groups by department_id in memory."""
+        if not department_ids:
+            return []
+        stmt = select(Project).where(Project.department_id.in_(department_ids))
+        if active_only:
+            stmt = stmt.where(Project.deleted_at.is_(None))
+        stmt = stmt.order_by(Project.position.asc(), Project.created_at.asc(), Project.id.asc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def create_company(
+        self, *, organization_id: UUID, name: str, created_by: UUID | None = None
+    ) -> Company:
+        company = Company(organization_id=organization_id, name=name, created_by=created_by)
+        self.session.add(company)
+        await self.session.flush()
+        return company
+
+    async def create_department(
+        self,
+        *,
+        organization_id: UUID,
+        company_id: UUID,
+        name: str,
+        icon: str | None = None,
+        position: int = 0,
+    ) -> Department:
+        dept = Department(
+            organization_id=organization_id,
+            company_id=company_id,
+            name=name,
+            icon=icon,
+            position=position,
+        )
+        self.session.add(dept)
+        await self.session.flush()
+        return dept
+
+    async def create_project(
+        self,
+        *,
+        organization_id: UUID,
+        department_id: UUID,
+        name: str,
+        description: str | None = None,
+        dataset_id: UUID | None = None,
+        status_config: Mapping[str, object] | None = None,
+        position: int = 0,
+    ) -> Project:
+        project = Project(
+            organization_id=organization_id,
+            department_id=department_id,
+            name=name,
+            description=description,
+            dataset_id=dataset_id,
+            status_config=dict(status_config) if status_config is not None else None,
+            position=position,
+        )
+        self.session.add(project)
+        await self.session.flush()
+        return project

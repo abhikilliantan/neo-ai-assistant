@@ -69,6 +69,10 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""  # empty default; real value goes in .env
     anthropic_model: str = "claude-sonnet-5"
+    # Economy model for the stateless service /ask endpoint (n8n/Telegram): a
+    # cheap model keeps automated Q&A cost low. Passed as a per-call override to
+    # provider.complete(); the interactive /chat path keeps anthropic_model.
+    service_ask_model: str = "claude-haiku-4-5-20251001"
 
     openai_api_key: str | None = None
     gemini_api_key: str | None = None

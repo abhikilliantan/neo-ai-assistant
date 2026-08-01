@@ -14,6 +14,7 @@ from app.infrastructure.db.models.documents import (
     Document,
     DocumentChunk,
 )
+from app.infrastructure.db.models.hierarchy import Company, Department, Project
 from app.infrastructure.db.models.identity import Session, User
 from app.infrastructure.db.models.memory import (
     EMBEDDING_DIMENSION,
@@ -40,10 +41,12 @@ __all__ = [
     "MEMORY_KINDS",
     "MESSAGE_ROLES",
     "ApiKey",
+    "Company",
     "Conversation",
     "Dataset",
     "DatasetColumn",
     "DatasetRow",
+    "Department",
     "Document",
     "DocumentChunk",
     "Membership",
@@ -51,6 +54,7 @@ __all__ = [
     "Message",
     "Organization",
     "Permission",
+    "Project",
     "Role",
     "RolePermission",
     "Session",
