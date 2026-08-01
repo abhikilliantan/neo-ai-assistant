@@ -33,7 +33,11 @@ from app.infrastructure.db.models import Company, Dataset, DatasetColumn, Organi
 from app.infrastructure.db.repositories import HierarchyRepository
 from app.infrastructure.db.session import build_system_database
 
-COMPANY_NAME = "Skillmind"
+COMPANY_NAME = "Skillmind Software"
+
+# Sibling companies the CEO oversees (real, but no departments/data yet → their
+# Overview is honestly empty). Present so the company switcher matches the design.
+SIBLING_COMPANIES = ("ABD Limited", "Consulting", "Stock Trading")
 
 # (department, icon, [(project, dataset-name-substring | None)])
 # A substring links the project to the tenant's dataset whose name contains it
@@ -53,6 +57,27 @@ _BLOCKED_RE = re.compile(r"block|parked|hold|stuck", re.I)
 async def _resolve_org(session: AsyncSession, slug: str) -> Organization | None:
     stmt = select(Organization).where(Organization.slug == slug)
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _ensure_company(
+    session: AsyncSession, repo: HierarchyRepository, org_id: UUID, name: str
+) -> tuple[Company, bool]:
+    """Return (company, created). Idempotent by (org, name); never duplicates."""
+    existing = (
+        (
+            await session.execute(
+                select(Company)
+                .where(Company.organization_id == org_id)
+                .where(Company.name == name)
+                .where(Company.deleted_at.is_(None))
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        return existing, False
+    return await repo.create_company(organization_id=org_id, name=name), True
 
 
 async def _find_dataset(session: AsyncSession, org_id: UUID, needle: str) -> Dataset | None:
@@ -115,47 +140,40 @@ async def _run(args: argparse.Namespace) -> int:
                 print(f"error: organization {args.org_slug!r} not found", file=sys.stderr)
                 return 1
 
-            existing = (
-                (
-                    await session.execute(
-                        select(Company)
-                        .where(Company.organization_id == org.id)
-                        .where(Company.name == COMPANY_NAME)
-                        .where(Company.deleted_at.is_(None))
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if existing is not None:
-                print(f"company {COMPANY_NAME!r} already exists for {org.slug} — nothing to do")
-                return 0
-
             repo = HierarchyRepository(session)
-            company = await repo.create_company(organization_id=org.id, name=COMPANY_NAME)
+            company, created = await _ensure_company(session, repo, org.id, COMPANY_NAME)
             linked = 0
-            for d_pos, (dept_name, icon, projects) in enumerate(PLAN):
-                dept = await repo.create_department(
-                    organization_id=org.id,
-                    company_id=company.id,
-                    name=dept_name,
-                    icon=icon,
-                    position=d_pos,
-                )
-                for p_pos, (proj_name, needle) in enumerate(projects):
-                    dataset = await _find_dataset(session, org.id, needle) if needle else None
-                    config = await _status_config(session, dataset) if dataset else None
-                    await repo.create_project(
+            if created:
+                for d_pos, (dept_name, icon, projects) in enumerate(PLAN):
+                    dept = await repo.create_department(
                         organization_id=org.id,
-                        department_id=dept.id,
-                        name=proj_name,
-                        dataset_id=dataset.id if dataset else None,
-                        status_config=config,
-                        position=p_pos,
+                        company_id=company.id,
+                        name=dept_name,
+                        icon=icon,
+                        position=d_pos,
                     )
-                    if dataset is not None:
-                        linked += 1
-                        print(f"  linked {proj_name!r} → dataset {dataset.name!r}")
+                    for p_pos, (proj_name, needle) in enumerate(projects):
+                        dataset = await _find_dataset(session, org.id, needle) if needle else None
+                        config = await _status_config(session, dataset) if dataset else None
+                        await repo.create_project(
+                            organization_id=org.id,
+                            department_id=dept.id,
+                            name=proj_name,
+                            dataset_id=dataset.id if dataset else None,
+                            status_config=config,
+                            position=p_pos,
+                        )
+                        if dataset is not None:
+                            linked += 1
+                            print(f"  linked {proj_name!r} → dataset {dataset.name!r}")
+            else:
+                print(f"company {COMPANY_NAME!r} already exists — leaving its departments as-is")
+
+            # Sibling companies (empty, honest): present so the switcher matches design.
+            for name in SIBLING_COMPANIES:
+                _, sib_created = await _ensure_company(session, repo, org.id, name)
+                if sib_created:
+                    print(f"  created sibling company {name!r} (no data yet)")
             await session.commit()
     finally:
         await db.dispose()
