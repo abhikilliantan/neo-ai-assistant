@@ -16,6 +16,7 @@ from app.shared.exceptions.ai import (
 from app.shared.exceptions.auth import (
     AuthenticationError,
     EmailAlreadyRegisteredError,
+    InsufficientScopeError,
     RegistrationClosedError,
 )
 from app.shared.exceptions.common import BadRequestError, NotFoundError
@@ -97,6 +98,16 @@ async def _authentication_handler(_: Request, exc: Exception) -> JSONResponse:
         _error_body("authentication_failed", "invalid credentials or token"),
         status_code=status.HTTP_401_UNAUTHORIZED,
         headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _insufficient_scope_handler(_: Request, exc: Exception) -> JSONResponse:
+    # 403: authenticated but not authorized for this scope. Fixed envelope; the
+    # required scope name is a developer constant, safe to surface.
+    scope = exc.required_scope if isinstance(exc, InsufficientScopeError) else "unknown"
+    return JSONResponse(
+        _error_body("insufficient_scope", f"missing required scope: {scope}"),
+        status_code=status.HTTP_403_FORBIDDEN,
     )
 
 
@@ -271,6 +282,7 @@ async def _embedding_api_handler(_: Request, exc: Exception) -> JSONResponse:
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_handler)
+    app.add_exception_handler(InsufficientScopeError, _insufficient_scope_handler)
     app.add_exception_handler(EmailAlreadyRegisteredError, _email_taken_handler)
     app.add_exception_handler(RegistrationClosedError, _registration_closed_handler)
     app.add_exception_handler(NotFoundError, _not_found_handler)

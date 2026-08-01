@@ -31,11 +31,14 @@ from app.application.ports.health import HealthCheck
 from app.application.ports.memory_extraction import MemoryExtractor
 from app.application.ports.storage import StorageProvider
 from app.application.ports.workflows import WorkflowClient
+from app.application.use_cases.api_keys import Principal, authenticate_api_key
 from app.infrastructure.config import Settings
 from app.infrastructure.db import Database
 from app.infrastructure.db.models import User
-from app.infrastructure.db.repositories import UserRepository
+from app.infrastructure.db.repositories import SystemRepository, UserRepository
 from app.infrastructure.security import (
+    DEFAULT_SCOPES,
+    KEY_PREFIX,
     ExpiredTokenError,
     InvalidTokenError,
     TokenPayload,
@@ -281,3 +284,109 @@ def get_current_tenant(payload: AccessPayloadDep) -> UUID | None:
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 StreamingCurrentUserDep = Annotated[User, Depends(get_current_user_scoped)]
 CurrentTenantDep = Annotated[UUID | None, Depends(get_current_tenant)]
+
+
+# --- service-key auth (Slice 1: read-only, tenant-locked) --------------------
+
+
+def _extract_api_key(request: Request) -> str | None:
+    """Read a service key from `X-API-Key`, or from `Authorization: Bearer` ONLY
+    when the token carries the neo_sk_ prefix — so a user JWT on the same header
+    is never mistaken for a service key.
+    """
+    x = request.headers.get("x-api-key")
+    if x:
+        return x
+    auth = request.headers.get("authorization")
+    if auth and auth[:7].lower() == "bearer ":
+        token = auth[7:].strip()
+        if token.startswith(KEY_PREFIX):
+            return token
+    return None
+
+
+async def get_service_principal(
+    request: Request,
+    system_session: SystemSessionDep,
+) -> Principal:
+    """Validate a service key and yield its Principal. The lookup is cross-tenant
+    (privileged `neo` session) — the tenant lives inside the matched key row —
+    exactly like login resolves a user by email before any tenant is known.
+    Enforces the `read` scope; touches last_used_at on success.
+    """
+    raw = _extract_api_key(request)
+    if raw is None:
+        raise AuthenticationError("missing api key")
+    return await authenticate_api_key(
+        raw, system=SystemRepository(system_session), required_scope="read"
+    )
+
+
+ServicePrincipalDep = Annotated[Principal, Depends(get_service_principal)]
+
+
+async def get_service_session(
+    principal: ServicePrincipalDep,
+    db: Annotated[Database, Depends(get_app_database)],
+) -> AsyncIterator[AsyncSession]:
+    """neo_app session with `app.current_tenant` set from the SERVICE key's org —
+    RLS engages identically to the user-JWT TenantSessionDep path."""
+    async with db.sessionmaker() as session, session.begin():
+        await set_tenant_guc(session, principal.organization_id)
+        yield session
+
+
+ServiceSessionDep = Annotated[AsyncSession, Depends(get_service_session)]
+
+
+async def get_principal(
+    request: Request,
+    system_session: SystemSessionDep,
+    db: Annotated[Database, Depends(get_app_database)],
+) -> Principal:
+    """Combined principal — a valid service key OR a valid user JWT. Endpoints
+    protected by this accept either (Slice 4). Service keys win when present
+    (neo_sk_ prefix); otherwise falls back to the JWT path.
+    """
+    raw = _extract_api_key(request)
+    if raw is not None:
+        return await authenticate_api_key(
+            raw, system=SystemRepository(system_session), required_scope="read"
+        )
+    auth = request.headers.get("authorization")
+    if not (auth and auth[:7].lower() == "bearer "):
+        raise AuthenticationError("missing bearer token or api key")
+    try:
+        payload = decode_access_token(auth[7:].strip())
+    except (InvalidTokenError, ExpiredTokenError) as e:
+        raise AuthenticationError("invalid or expired token") from e
+    async with db.sessionmaker() as session:
+        user = await UserRepository(session).get_by_id(UUID(payload.sub))
+    if user is None or not user.is_active:
+        raise AuthenticationError("user not found or inactive")
+    org_id = UUID(payload.tenant_id) if payload.tenant_id is not None else None
+    # ponytail: user gets the read scope this slice enforces; broaden via RBAC
+    # (apikey:* perms are already seeded) when write scopes land.
+    return Principal(
+        kind="user",
+        organization_id=org_id,
+        scopes=list(DEFAULT_SCOPES),
+        user_id=user.id,
+    )
+
+
+PrincipalDep = Annotated[Principal, Depends(get_principal)]
+
+
+async def get_principal_session(
+    principal: PrincipalDep,
+    db: Annotated[Database, Depends(get_app_database)],
+) -> AsyncIterator[AsyncSession]:
+    """neo_app session with the GUC set from EITHER principal kind — the shared
+    RLS-scoped session for combined-auth endpoints."""
+    async with db.sessionmaker() as session, session.begin():
+        await set_tenant_guc(session, principal.organization_id)
+        yield session
+
+
+PrincipalSessionDep = Annotated[AsyncSession, Depends(get_principal_session)]

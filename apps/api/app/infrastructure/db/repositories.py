@@ -26,6 +26,7 @@ from sqlalchemy.orm import contains_eager
 from app.application.ports.documents import DocumentChunk as DocumentChunkVO
 from app.application.ports.repositories import DatasetColumnSpec, DatasetRowData
 from app.infrastructure.db.models import (
+    ApiKey,
     Conversation,
     Dataset,
     DatasetColumn,
@@ -112,6 +113,61 @@ class SessionRepository:
         s = await self.session.get(Session, session_id)
         if s is not None and s.revoked_at is None:
             s.revoked_at = datetime.now(UTC)
+            await self.session.flush()
+
+
+class ApiKeyRepository:
+    """Tenant-scoped API-key MANAGEMENT (create / list / revoke). Used with the
+    RLS-enforced app session, so it only ever touches the caller's own org.
+
+    Auth-time lookup is deliberately NOT here: matching a raw key to its row is a
+    cross-tenant read (the tenant is inside the row you're trying to find), so it
+    lives on SystemRepository (privileged) — exactly like login looks up users by
+    email before any tenant is known.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        key_prefix: str,
+        key_hash: str,
+        scopes: list[str],
+    ) -> ApiKey:
+        key = ApiKey(
+            organization_id=organization_id,
+            name=name,
+            key_prefix=key_prefix,
+            key_hash=key_hash,
+            scopes=scopes,
+        )
+        self.session.add(key)
+        await self.session.flush()
+        return key
+
+    async def list_for_org(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[ApiKey]:
+        stmt = select(ApiKey).where(ApiKey.organization_id == organization_id)
+        if active_only:
+            stmt = stmt.where(ApiKey.revoked_at.is_(None))
+        stmt = stmt.order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_by_id(self, api_key_id: UUID) -> ApiKey | None:
+        # RLS hides cross-tenant rows on read; a None here means unknown OR
+        # another tenant's key — the endpoint collapses both to 404.
+        return await self.session.get(ApiKey, api_key_id)
+
+    async def revoke(self, api_key_id: UUID) -> None:
+        """Idempotent — no-op on missing/already-revoked."""
+        key = await self.session.get(ApiKey, api_key_id)
+        if key is not None and key.revoked_at is None:
+            key.revoked_at = datetime.now(UTC)
             await self.session.flush()
 
 
@@ -610,6 +666,25 @@ class SystemRepository:
     async def find_user_by_email(self, email_normalized: str) -> User | None:
         stmt = select(User).where(User.email == email_normalized)
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def find_api_keys_by_prefix(self, key_prefix: str) -> list[ApiKey]:
+        """Cross-tenant lookup by prefix for service-key auth — the pre-tenant
+        step, exactly like find_user_by_email for login. Returns ALL matches
+        (prefix collisions are astronomically unlikely but a list keeps this from
+        ever 500ing on one); the use case verifies each by full-hash compare and
+        picks the match. Includes revoked/expired rows — the use case rejects
+        those so the failure reason stays precise.
+        """
+        stmt = select(ApiKey).where(ApiKey.key_prefix == key_prefix)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def touch_api_key_last_used(self, api_key_id: UUID) -> None:
+        """Stamp last_used_at at auth time. Runs on the privileged session (the
+        auth lookup already does), so no tenant GUC is needed here."""
+        key = await self.session.get(ApiKey, api_key_id)
+        if key is not None:
+            key.last_used_at = datetime.now(UTC)
+            await self.session.flush()
 
     async def list_memberships_for_user(
         self, user_id: UUID, *, active_only: bool = True

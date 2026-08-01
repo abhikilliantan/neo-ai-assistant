@@ -10,6 +10,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from app.infrastructure.db.models import (
+        ApiKey,
         Conversation,
         Dataset,
         DatasetColumn,
@@ -46,6 +47,8 @@ class SystemRepositoryPort(Protocol):
     """Privileged surface — the only cross-tenant path. Keep this tiny."""
 
     async def find_user_by_email(self, email_normalized: str) -> User | None: ...
+    async def find_api_keys_by_prefix(self, key_prefix: str) -> list[ApiKey]: ...
+    async def touch_api_key_last_used(self, api_key_id: UUID) -> None: ...
     async def list_memberships_for_user(
         self, user_id: UUID, *, active_only: bool = True
     ) -> list[Membership]: ...
@@ -57,6 +60,26 @@ class SystemRepositoryPort(Protocol):
         org_name: str,
         role_name: str = "owner",
     ) -> tuple[User, Organization, Membership]: ...
+
+
+class ApiKeyRepositoryPort(Protocol):
+    """Tenant-scoped API-key management (RLS-enforced). Auth-time lookup lives on
+    SystemRepositoryPort — it's cross-tenant."""
+
+    async def create(
+        self,
+        *,
+        organization_id: UUID,
+        name: str,
+        key_prefix: str,
+        key_hash: str,
+        scopes: list[str],
+    ) -> ApiKey: ...
+    async def list_for_org(
+        self, organization_id: UUID, *, active_only: bool = True
+    ) -> list[ApiKey]: ...
+    async def get_by_id(self, api_key_id: UUID) -> ApiKey | None: ...
+    async def revoke(self, api_key_id: UUID) -> None: ...
 
 
 # --- chat persistence (tenant-scoped, RLS-enforced) --------------------------

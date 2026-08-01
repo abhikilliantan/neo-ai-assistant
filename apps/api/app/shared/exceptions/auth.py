@@ -22,3 +22,15 @@ class EmailAlreadyRegisteredError(AuthError):
 class RegistrationClosedError(AuthError):
     """Public registration is gated off (R6). Raised by POST /register when
     settings.registration_enabled is False; mapped to 403."""
+
+
+class InsufficientScopeError(AuthError):
+    """A valid principal lacks the scope the endpoint requires. Mapped to 403.
+
+    Distinct from AuthenticationError (401): the caller IS authenticated, just
+    not authorized for this action.
+    """
+
+    def __init__(self, required_scope: str) -> None:
+        self.required_scope = required_scope
+        super().__init__(f"missing required scope: {required_scope}")

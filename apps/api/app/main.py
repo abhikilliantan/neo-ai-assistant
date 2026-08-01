@@ -33,12 +33,14 @@ from app.infrastructure.logging import configure_logging, get_logger
 from app.infrastructure.storage import build_storage_provider, probe_storage_writable
 from app.presentation.http.routers import (
     agents_router,
+    api_keys_router,
     auth_router,
     chat_router,
     conversations_router,
     datasets_router,
     documents_router,
     memories_router,
+    service_router,
     system_router,
 )
 
@@ -168,6 +170,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agents_router)
     app.include_router(documents_router)
     app.include_router(datasets_router)
+    app.include_router(api_keys_router)
+    app.include_router(service_router)
     return app
 
 
