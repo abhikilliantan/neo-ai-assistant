@@ -1,0 +1,245 @@
+{
+  "name": "Neo Telegram Chat",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "id": "a7000000-0000-4000-8000-000000000001",
+      "name": "Every 15s"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.NEO_TELEGRAM_BOT_TOKEN }}/deleteWebhook",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [220, 0],
+      "id": "a7000000-0000-4000-8000-000000000002",
+      "name": "Delete Webhook",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read the Telegram long-poll offset from this workflow's own static data.\n// getUpdates with offset = lastUpdateId + 1 acknowledges everything already\n// processed, so each update is delivered exactly once.\nconst sd = $getWorkflowStaticData('global');\nconst last = sd.lastUpdateId || 0;\nreturn [{ json: { offset: last ? last + 1 : 0 } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0],
+      "id": "a7000000-0000-4000-8000-000000000003",
+      "name": "Read Offset"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.NEO_TELEGRAM_BOT_TOKEN }}/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"message\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [660, 0],
+      "id": "a7000000-0000-4000-8000-000000000004",
+      "name": "Get Updates"
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per text message. Capture chatId + text; classify /start vs a\n// question. Skip empty / non-text updates. Advance the offset past EVERY\n// update_id seen (even skipped ones) so non-text messages aren't re-fetched\n// forever.\nconst res = $input.first().json || {};\nconst updates = Array.isArray(res.result) ? res.result : [];\nconst sd = $getWorkflowStaticData('global');\nlet maxId = sd.lastUpdateId || 0;\nconst out = [];\nfor (const u of updates) {\n  if (typeof u.update_id === 'number' && u.update_id > maxId) maxId = u.update_id;\n  const msg = u.message;\n  if (!msg) continue;\n  const chatId = msg.chat && msg.chat.id;\n  const text = typeof msg.text === 'string' ? msg.text.trim() : '';\n  if (!chatId || !text) continue; // skip empty / non-text\n  const isStart = /^\\/start(\\b|@|$)/.test(text);\n  out.push({ json: { chatId, text, kind: isStart ? 'start' : 'ask' } });\n}\nsd.lastUpdateId = maxId;\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "id": "a7000000-0000-4000-8000-000000000005",
+      "name": "Process Updates"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.kind }}",
+              "rightValue": "start",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1100, 0],
+      "id": "a7000000-0000-4000-8000-000000000006",
+      "name": "Route: /start?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.NEO_TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Process Updates').item.json.chatId, text: \"Hi, I'm Neo. Ask me about your business.\" }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1320, -140],
+      "id": "a7000000-0000-4000-8000-000000000007",
+      "name": "Send Start Reply",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/v1/service/ask",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NEO_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ question: $json.text }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1320, 120],
+      "id": "a7000000-0000-4000-8000-000000000008",
+      "name": "Ask Neo",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.NEO_TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Process Updates').item.json.chatId, text: ($json.answer || 'No answer.') }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1560, 20],
+      "id": "a7000000-0000-4000-8000-000000000009",
+      "name": "Send Reply",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.NEO_TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Process Updates').item.json.chatId, text: \"Sorry, I couldn't reach Neo right now.\" }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1560, 240],
+      "id": "a7000000-0000-4000-8000-000000000010",
+      "name": "Send Error Reply",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 15s": {
+      "main": [[{ "node": "Delete Webhook", "type": "main", "index": 0 }]]
+    },
+    "Delete Webhook": {
+      "main": [[{ "node": "Read Offset", "type": "main", "index": 0 }]]
+    },
+    "Read Offset": {
+      "main": [[{ "node": "Get Updates", "type": "main", "index": 0 }]]
+    },
+    "Get Updates": {
+      "main": [[{ "node": "Process Updates", "type": "main", "index": 0 }]]
+    },
+    "Process Updates": {
+      "main": [[{ "node": "Route: /start?", "type": "main", "index": 0 }]]
+    },
+    "Route: /start?": {
+      "main": [
+        [{ "node": "Send Start Reply", "type": "main", "index": 0 }],
+        [{ "node": "Ask Neo", "type": "main", "index": 0 }]
+      ]
+    },
+    "Ask Neo": {
+      "main": [
+        [{ "node": "Send Reply", "type": "main", "index": 0 }],
+        [{ "node": "Send Error Reply", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
