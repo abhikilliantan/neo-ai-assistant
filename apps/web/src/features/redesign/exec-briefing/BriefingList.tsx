@@ -12,8 +12,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { Delta, GlowCard, SampleTag } from "@/features/redesign/components";
+import { Delta, GlowCard } from "@/features/redesign/components";
 import { round } from "@/features/redesign/components/format";
+import { SectionSampleChip } from "./DemoMode";
 
 type StatusTone = "good" | "excellent" | "attention" | "high" | "action" | "on-track" | "new";
 
@@ -122,10 +123,11 @@ export function BriefingList({ projectsHealth, counts, overviewsReady }: Props) 
 
   return (
     <GlowCard className="p-0">
-      <div className="border-b border-rd-border px-5 py-4">
+      <div className="flex items-center justify-between gap-2 border-b border-rd-border px-5 py-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-rd-heading">
           Today&apos;s Executive Briefing
         </h2>
+        <SectionSampleChip />
       </div>
       <div className="px-5">
         {rows.map((r) => {
@@ -141,10 +143,7 @@ export function BriefingList({ projectsHealth, counts, overviewsReady }: Props) 
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-rd-heading">{r.label}</p>
-                <div className="flex items-center gap-1.5">
-                  <p className="truncate text-xs text-rd-muted">{r.subtext}</p>
-                  {!r.real && <SampleTag className="shrink-0" />}
-                </div>
+                <p className="truncate text-xs text-rd-muted">{r.subtext}</p>
               </div>
               <span
                 className={cn(

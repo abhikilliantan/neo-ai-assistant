@@ -14,9 +14,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { AlertRow, SampleTag } from "@/features/redesign/components";
+import { AlertRow } from "@/features/redesign/components";
 import { navHref } from "@/features/redesign/shell";
 import { ALERTS, MEETINGS, RECOMMENDATIONS } from "./data";
+import { SectionSampleChip } from "./DemoMode";
 
 type Tone = "cyan" | "green" | "rose" | "neutral";
 
@@ -131,7 +132,7 @@ function RailCard({
     <div className="glow-card p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-rd-heading">{title}</h3>
-        {sample && <SampleTag />}
+        {sample && <SectionSampleChip />}
       </div>
       {children}
     </div>

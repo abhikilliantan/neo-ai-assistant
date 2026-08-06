@@ -1,11 +1,12 @@
-import { MetricCard, MiniBars, SampleTag, SectionHeader } from "@/features/redesign/components";
+import { MetricCard, MiniBars, SectionHeader } from "@/features/redesign/components";
 import { SNAPSHOT } from "./data";
+import { SectionSampleChip } from "./DemoMode";
 
-/** 8-card KPI strip. All sample (no live endpoint) — one tag on the header. */
+/** 8-card KPI strip. All sample (no live endpoint) — one chip on the header. */
 export function KeyPerformanceSnapshot() {
   return (
     <section>
-      <SectionHeader title="Key Performance Snapshot" action={<SampleTag />} />
+      <SectionHeader title="Key Performance Snapshot" action={<SectionSampleChip />} />
       {/* 4-up (2 rows): 8 across starves each card so values like $1.24M clip. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {SNAPSHOT.map((m) => (

@@ -1,6 +1,5 @@
 import { Bot, DollarSign, TrendingUp, Users, Wallet } from "lucide-react";
-import { MiniBars, RingGauge, Sparkline } from "@/features/redesign/components";
-import { round } from "@/features/redesign/components/format";
+import { MiniBars, Sparkline } from "@/features/redesign/components";
 import { KpiTile } from "./KpiTile";
 
 const revSpark = [10, 13, 12, 17, 16, 21, 24, 23, 28, 31, 34, 40];
@@ -27,7 +26,6 @@ export function KpiRow({ projectsHealth, overviewsReady }: Props) {
         value="$1.24M"
         delta={18.6}
         note="vs last month"
-        sample
       >
         <Sparkline data={revSpark} color="cyan" height={40} />
       </KpiTile>
@@ -39,7 +37,6 @@ export function KpiRow({ projectsHealth, overviewsReady }: Props) {
         value="$2.54M"
         delta={8.3}
         note="vs last month"
-        sample
       >
         <Sparkline data={cashSpark} color="green" height={40} />
       </KpiTile>
@@ -51,7 +48,6 @@ export function KpiRow({ projectsHealth, overviewsReady }: Props) {
         value="$7.82M"
         delta={24.7}
         note="vs last month"
-        sample
       >
         <Sparkline data={pipeSpark} color="violet" height={40} />
       </KpiTile>
@@ -60,15 +56,11 @@ export function KpiRow({ projectsHealth, overviewsReady }: Props) {
         icon={TrendingUp}
         tone="cyan"
         label="Projects Health"
-        value={`${round(healthValue)}%`}
+        value={`${healthValue}%`}
         delta={6}
         note="vs last month"
-        sample={!healthReal}
-      >
-        <div className="flex justify-center">
-          <RingGauge value={healthValue} size={64} />
-        </div>
-      </KpiTile>
+        ring={healthValue}
+      />
 
       <KpiTile
         icon={Users}
@@ -77,7 +69,6 @@ export function KpiRow({ projectsHealth, overviewsReady }: Props) {
         value="156"
         deltaText="+12 new"
         note="vs last month"
-        sample
       >
         <MiniBars data={empBars} color="amber" height={40} />
       </KpiTile>
@@ -89,7 +80,6 @@ export function KpiRow({ projectsHealth, overviewsReady }: Props) {
         value="78%"
         delta={15}
         note="vs yesterday"
-        sample
       >
         <Sparkline data={aiSpark} color="violet" height={40} />
       </KpiTile>

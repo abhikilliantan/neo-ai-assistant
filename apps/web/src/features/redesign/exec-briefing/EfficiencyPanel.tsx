@@ -1,6 +1,7 @@
 import { ArrowUpRight } from "lucide-react";
-import { LineTrend, RingGauge, SampleTag } from "@/features/redesign/components";
+import { LineTrend, RingGauge } from "@/features/redesign/components";
 import { EFFICIENCY_TREND } from "./data";
+import { SectionSampleChip } from "./DemoMode";
 
 export function EfficiencyPanel() {
   return (
@@ -11,7 +12,7 @@ export function EfficiencyPanel() {
         <h3 className="text-sm font-semibold uppercase tracking-wide text-rd-heading">
           Enterprise Efficiency Score
         </h3>
-        <SampleTag />
+        <SectionSampleChip />
       </div>
       <div className="flex flex-col items-center">
         <RingGauge value={94} size={150} label="Excellent" />
@@ -25,7 +26,6 @@ export function EfficiencyPanel() {
       <div className="mt-6">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-medium text-rd-body">Efficiency Trend (7 Days)</h3>
-          <SampleTag />
         </div>
         <LineTrend data={EFFICIENCY_TREND} unit="%" height={200} />
       </div>

@@ -8,9 +8,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { SampleTag } from "@/features/redesign/components";
 import { round } from "@/features/redesign/components/format";
 import { REGIONS } from "./data";
+import { SectionSampleChip } from "./DemoMode";
 
 const ICON: Record<string, LucideIcon> = {
   Kenya: MapPin,
@@ -21,9 +21,10 @@ const ICON: Record<string, LucideIcon> = {
   Global: Globe,
 };
 
-/** Enterprise Overview: a glowing world globe with region nodes overlaid.
- *  Pass `imageSrc` to swap the CSS placeholder for a real globe render. */
-export function EnterpriseOverview({ imageSrc }: { imageSrc?: string }) {
+/** Enterprise Overview: a glowing world globe with region nodes.
+ *  `imageSrc` defaults to the shipped globe render (black bg dropped via
+ *  mix-blend screen); pass another path to swap it. */
+export function EnterpriseOverview({ imageSrc = "/enterprise-globe.png" }: { imageSrc?: string }) {
   return (
     <div className="glow-card p-5">
       <div className="mb-4 flex items-center gap-2">
@@ -31,12 +32,10 @@ export function EnterpriseOverview({ imageSrc }: { imageSrc?: string }) {
         <h2 className="text-sm font-semibold uppercase tracking-wide text-rd-heading">
           Enterprise Overview
         </h2>
-        <SampleTag />
+        <SectionSampleChip />
       </div>
 
-      {/* Globe centered, region nodes in a readable grid below. (The mockup
-          flanks the globe, but the flank columns are too narrow for the region
-          names at laptop width — the grid keeps every node legible.) */}
+      {/* Globe centered, region nodes in a readable grid below. */}
       <div className="flex flex-col items-center">
         <Sphere imageSrc={imageSrc} />
       </div>
@@ -49,41 +48,18 @@ export function EnterpriseOverview({ imageSrc }: { imageSrc?: string }) {
   );
 }
 
-function Sphere({ imageSrc }: { imageSrc?: string }) {
+function Sphere({ imageSrc }: { imageSrc: string }) {
   return (
-    <div className="relative mx-auto flex aspect-square w-full max-w-[240px] items-center justify-center">
-      <div
-        className="absolute inset-4 rounded-full opacity-60 blur-2xl"
-        style={{
-          background: "radial-gradient(circle at 50% 40%, hsl(var(--rd-cyan)), transparent 70%)",
-        }}
-        aria-hidden
+    <div className="relative mx-auto aspect-square w-full max-w-[260px]">
+      {/* mix-blend screen drops the image's black background so only the glow
+          shows over the dark panel — no visible bounding box. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imageSrc}
+        alt="Enterprise operations globe"
+        className="h-full w-full object-contain"
+        style={{ mixBlendMode: "screen" }}
       />
-      {imageSrc ? (
-        // asset hook: real globe render drops in here
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={imageSrc}
-          alt="Enterprise globe"
-          className="relative z-10 h-full w-full rounded-full object-contain"
-        />
-      ) : (
-        <div
-          className="relative z-10 aspect-square w-[78%] overflow-hidden rounded-full border border-rd-cyan/40"
-          style={{
-            background:
-              "radial-gradient(circle at 42% 32%, rgba(56,189,248,.45), rgba(11,17,32,.95) 72%)",
-          }}
-          aria-hidden
-        >
-          {/* meridians / latitudes */}
-          <span className="absolute inset-0 rounded-[50%] border border-rd-cyan/20" />
-          <span className="absolute inset-x-[30%] inset-y-0 rounded-[50%] border border-rd-cyan/20" />
-          <span className="absolute inset-x-[10%] inset-y-0 rounded-[50%] border border-rd-cyan/15" />
-          <span className="absolute inset-x-0 inset-y-[30%] rounded-[50%] border border-rd-cyan/20" />
-          <span className="absolute inset-x-0 inset-y-[10%] rounded-[50%] border border-rd-cyan/15" />
-        </div>
-      )}
     </div>
   );
 }
