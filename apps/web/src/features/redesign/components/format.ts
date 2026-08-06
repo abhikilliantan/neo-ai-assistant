@@ -11,12 +11,12 @@ export function formatDelta(n: number, decimals = 1): string {
   return `${r > 0 ? "+" : ""}${r.toLocaleString("en-US")}`;
 }
 
-/** Compact currency for revenue tiles, e.g. $1.2M / $840K / $512. */
+/** Compact currency for revenue tiles, e.g. $1.28M / $542K / $512.
+ *  Hand-rolled (not Intl compact notation) so server and client agree — ICU
+ *  compact formatting varies by Node/browser CLDR version and breaks hydration. */
 export function formatCurrency(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(n);
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `$${round(n / 1_000_000, 2)}M`;
+  if (abs >= 1_000) return `$${round(n / 1_000, 0)}K`;
+  return `$${round(n, 0)}`;
 }

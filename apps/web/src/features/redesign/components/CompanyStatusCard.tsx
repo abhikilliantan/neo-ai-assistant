@@ -2,6 +2,7 @@ import { GlowCard } from "./GlowCard";
 import { RingGauge } from "./RingGauge";
 import { Sparkline, type SparkColor } from "./Sparkline";
 import { Delta } from "./Delta";
+import { SampleTag } from "./SampleTag";
 import { formatCurrency } from "./format";
 
 export interface CompanyStatusCardProps {
@@ -27,11 +28,14 @@ export function CompanyStatusCard({
   sample,
 }: CompanyStatusCardProps) {
   return (
-    <GlowCard sample={sample}>
+    <GlowCard>
       <div className="flex items-center gap-4">
         <RingGauge value={percent} size={92} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-rd-heading">{name}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="truncate text-sm font-semibold text-rd-heading">{name}</p>
+            {sample && <SampleTag className="shrink-0" />}
+          </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-xl font-semibold tabular-nums text-rd-heading">
               {formatCurrency(revenue)}
