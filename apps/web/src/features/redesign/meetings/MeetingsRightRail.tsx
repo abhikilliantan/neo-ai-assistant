@@ -14,8 +14,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { SampleTag } from "@/features/redesign/components";
-import { AvatarStack } from "./AvatarStack";
+import { AvatarStack, SampleTag } from "@/features/redesign/components";
 import { NEXT_MEETING, PRIORITY_PILL, QUICK_ACTIONS, TASKS } from "./data";
 
 const QA_ICON: Record<string, LucideIcon> = {

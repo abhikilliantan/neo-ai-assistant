@@ -11,8 +11,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { SampleTag } from "@/features/redesign/components";
-import { AvatarStack } from "./AvatarStack";
+import { AvatarStack, SampleTag } from "@/features/redesign/components";
 import { UPCOMING, type TagColor, type Upcoming } from "./data";
 
 const ICONS: Record<Upcoming["icon"], LucideIcon> = {

@@ -15,6 +15,7 @@ export { QuickActionButton } from "./QuickActionButton";
 export { RadarStat } from "./RadarStat";
 export { Donut } from "./Donut";
 export { GanttTimeline } from "./GanttTimeline";
+export { AvatarStack } from "./AvatarStack";
 export { SampleTag } from "./SampleTag";
 export type { SampleTagProps } from "./SampleTag";
 export { DemoModeProvider, useDemoMode, SectionSampleChip, DemoToggle } from "./DemoMode";

@@ -28,8 +28,11 @@ export function Donut({ data, centerValue, centerLabel, size = 170, className }:
             data={data}
             dataKey="value"
             nameKey="label"
-            innerRadius={size * 0.62}
-            outerRadius={size * 0.9}
+            // Radii are px within the size×size box (center is size/2). Keep the
+            // outer radius under size/2 so the ring fits — larger values push the
+            // whole ring outside the viewport, leaving only corner fragments.
+            innerRadius={size * 0.3}
+            outerRadius={size * 0.46}
             paddingAngle={2}
             stroke="none"
             startAngle={90}

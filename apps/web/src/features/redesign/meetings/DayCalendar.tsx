@@ -2,8 +2,7 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { SampleTag } from "@/features/redesign/components";
-import { AvatarStack } from "./AvatarStack";
+import { AvatarStack, SampleTag } from "@/features/redesign/components";
 import { CAL_SLOTS, DAY_LABEL, type CalSlot, type SlotColor } from "./data";
 
 const BORDER: Record<SlotColor, string> = {
