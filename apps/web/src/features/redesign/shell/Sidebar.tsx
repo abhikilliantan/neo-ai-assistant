@@ -26,12 +26,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     >
       {/* Brand */}
       <div className="flex h-16 items-center gap-3 border-b border-rd-border px-4">
-        <span
-          className="gradient-ring relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rd-card text-sm font-bold tracking-tight text-rd-heading"
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/neo-logo.png"
+          alt=""
+          className="h-9 w-9 shrink-0 rounded-xl object-cover [mix-blend-mode:screen]"
           aria-hidden
-        >
-          N
-        </span>
+        />
         {!collapsed && (
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-bold tracking-[0.18em] text-rd-heading">NEO</p>
