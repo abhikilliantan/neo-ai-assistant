@@ -43,10 +43,30 @@ const config: Config = {
         "glass-hi": "var(--glass-hi)",
         "glass-border": "var(--glass-border)",
         "glass-border-strong": "var(--glass-border-strong)",
+        // redesign (Phase 0) — dark AI-OS scale, namespaced so it can't collide
+        // with the semantic tokens above or affect any existing page.
+        rd: {
+          base: "hsl(var(--rd-base) / <alpha-value>)",
+          panel: "hsl(var(--rd-panel) / <alpha-value>)",
+          card: "hsl(var(--rd-card) / <alpha-value>)",
+          border: "var(--rd-border)",
+          "border-hover": "var(--rd-border-hover)",
+          cyan: "hsl(var(--rd-cyan) / <alpha-value>)",
+          "cyan-2": "hsl(var(--rd-cyan-2) / <alpha-value>)",
+          violet: "hsl(var(--rd-violet) / <alpha-value>)",
+          "violet-2": "hsl(var(--rd-violet-2) / <alpha-value>)",
+          green: "hsl(var(--rd-green) / <alpha-value>)",
+          amber: "hsl(var(--rd-amber) / <alpha-value>)",
+          rose: "hsl(var(--rd-rose) / <alpha-value>)",
+          heading: "hsl(var(--rd-heading) / <alpha-value>)",
+          body: "hsl(var(--rd-body) / <alpha-value>)",
+          muted: "hsl(var(--rd-muted) / <alpha-value>)",
+        },
       },
       backgroundImage: {
         "accent-grad": "var(--accent-grad)",
         "app-bg": "var(--app-bg)",
+        "rd-grad": "var(--rd-grad)",
       },
       borderRadius: {
         lg: "var(--radius)",

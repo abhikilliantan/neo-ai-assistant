@@ -136,3 +136,76 @@
     }
   }
 }
+
+/* ============================================================================
+   REDESIGN (Phase 0) — dark "AI Operating System" tokens.
+   Namespaced `--rd-*` so they live ALONGSIDE the existing theme without
+   touching any current page. Referenced via the `rd` Tailwind color scale
+   and the utilities below. Dark-only for now (matches the approved mockup).
+   ========================================================================== */
+:root {
+  /* Colours are HSL triplets (like the semantic tokens above) so Tailwind's
+     /alpha modifiers resolve. Wrap in hsl() for raw-CSS/SVG use. */
+  --rd-base: 222 50% 4%; /* #05080F */
+  --rd-panel: 223 49% 8%; /* #0B1120 */
+  --rd-card: 220 49% 11%; /* #0E1729 */
+  /* borders (raw rgba — used directly, no alpha modifier) */
+  --rd-border: rgba(56, 132, 255, 0.18); /* hairline */
+  --rd-border-hover: rgba(56, 189, 248, 0.35);
+  /* accents */
+  --rd-cyan: 198 93% 60%; /* #38BDF8 */
+  --rd-cyan-2: 188 86% 53%; /* #22D3EE */
+  --rd-violet: 258 90% 66%; /* #8B5CF6 */
+  --rd-violet-2: 271 91% 65%; /* #A855F7 */
+  --rd-green: 158 64% 52%; /* #34D399 — up / healthy */
+  --rd-amber: 38 92% 50%; /* #F59E0B — attention */
+  --rd-rose: 350 89% 60%; /* #F43F5E — alert / down */
+  /* text */
+  --rd-heading: 210 40% 98%; /* #F8FAFC */
+  --rd-body: 215 20% 65%; /* #94A3B8 */
+  --rd-muted: 215 16% 47%; /* #64748B */
+  /* signature gradient (rings / active states): cyan → violet */
+  --rd-grad: linear-gradient(135deg, hsl(var(--rd-cyan)) 0%, hsl(var(--rd-violet)) 100%);
+  --rd-glow: rgba(56, 189, 248, 0.22);
+  --rd-radius-card: 14px;
+}
+
+@layer components {
+  /* Card surface: subtle top-lighter gradient over the card token, hairline
+     border, soft outer glow that lifts on hover. The reusable base for every
+     redesign widget. */
+  .glow-card {
+    position: relative;
+    border-radius: var(--rd-radius-card);
+    border: 1px solid var(--rd-border);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 42%),
+      hsl(var(--rd-card));
+    transition:
+      border-color 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+  .glow-card:hover {
+    border-color: var(--rd-border-hover);
+    box-shadow:
+      0 0 0 1px var(--rd-border-hover),
+      0 14px 44px -14px var(--rd-glow);
+  }
+
+  /* Gradient hairline ring on any rounded element (avatars, active pills).
+     Uses a masked padding-box so only the 1px border shows the gradient. */
+  .gradient-ring::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--rd-grad);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+}
