@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueries, useQuery } from "@tanstack/react-query";
-import type { CompanyOverview, CompanySummary } from "@neo/shared-types";
+import type { CompanySummary } from "@neo/shared-types";
 import type { SparkColor } from "@/features/redesign/components";
 import { getCompanyOverview, listCompanies } from "@/services/overview";
 
@@ -151,16 +151,6 @@ export interface MergedCompany extends CompanyConfig {
   updatedAt: string | null;
 }
 
-/** Average connected-project progress, or null when nothing is wired live. */
-function avgProgress(o: CompanyOverview): number | null {
-  const pcts = o.departments
-    .flatMap((d) => d.projects)
-    .map((p) => p.progress_pct)
-    .filter((v): v is number => v != null);
-  if (pcts.length === 0) return null;
-  return pcts.reduce((a, b) => a + b, 0) / pcts.length;
-}
-
 export interface CompaniesData {
   ready: boolean; // real company list loaded
   companies: MergedCompany[];
@@ -206,17 +196,20 @@ export function useCompaniesData(): CompaniesData {
     };
   }
 
+  // Names + count stay REAL; health rings and project counts read weak on the
+  // live data (sparse overviews), so they're shown as the mockup's SAMPLE
+  // values — every one carries a SampleTag and hides under global Demo mode.
+  // updated_at is still real when present (drives Recently Updated).
   const merged: MergedCompany[] = companies.map((c, i) => {
     const cfg = pickConfig(c.name);
     const ov = overviewQs[i]?.data;
-    const progress = ov ? avgProgress(ov) : null;
     return {
       ...cfg,
       name: c.name,
       id: c.id,
-      ring: progress ?? cfg.percent,
-      ringIsReal: progress != null,
-      liveActiveProjects: ov ? ov.kpis.active_projects : null,
+      ring: cfg.percent,
+      ringIsReal: false,
+      liveActiveProjects: null,
       updatedAt: ov ? ov.updated_at : null,
     };
   });
@@ -224,16 +217,6 @@ export function useCompaniesData(): CompaniesData {
     (a, b) =>
       DISPLAY_ORDER.indexOf(pickOrderKey(a.name)) - DISPLAY_ORDER.indexOf(pickOrderKey(b.name)),
   );
-
-  const connected = merged.filter((m) => m.ringIsReal).map((m) => m.ring);
-  const avgHealth =
-    connected.length > 0 ? connected.reduce((a, b) => a + b, 0) / connected.length : null;
-
-  const liveProjects = merged
-    .map((m) => m.liveActiveProjects)
-    .filter((v): v is number => v != null);
-  const totalActiveProjects =
-    liveProjects.length > 0 ? liveProjects.reduce((a, b) => a + b, 0) : null;
 
   const updated = merged
     .filter((m): m is MergedCompany & { updatedAt: string } => m.updatedAt != null)
@@ -244,8 +227,8 @@ export function useCompaniesData(): CompaniesData {
     ready: true,
     companies: merged,
     totalCompanies: companies.length,
-    totalActiveProjects,
-    avgHealth,
+    totalActiveProjects: null, // KPI + rail fall back to the sample 23
+    avgHealth: null, // KPI falls back to the sample 85%
     recentlyUpdated: updated.length > 0 ? updated : null,
   };
 }
