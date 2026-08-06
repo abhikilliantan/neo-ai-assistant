@@ -23,9 +23,12 @@ import { ConversationsRail } from "./ConversationsRail";
 import { ContextRail } from "./ContextRail";
 import { parseProjectStatus, ProjectStatusCard, stripStatusBlock } from "./ProjectStatusCard";
 
-// This page pins every turn to the grounded project_analyst agent — its
-// answers come from dataset queries, which is what the status card renders.
-const AGENT = "project_analyst";
+// Pin every turn to the `assistant` agent: it carries the FULL read-only
+// toolset — search_documents (uploaded-file RAG with citations),
+// list_datasets/query_dataset (structured trackers), and search_memory — so
+// one chat answers both "status from a tracker" and "what does this PDF say"
+// questions, grounded and cited. (project_analyst is a dataset-only subset.)
+const AGENT = "assistant";
 
 const QUICK_QUESTIONS = [
   "What is Bidco project status?",
