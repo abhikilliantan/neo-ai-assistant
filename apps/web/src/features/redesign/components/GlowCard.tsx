@@ -12,7 +12,7 @@ export interface GlowCardProps extends React.HTMLAttributes<HTMLDivElement> {
 export const GlowCard = React.forwardRef<HTMLDivElement, GlowCardProps>(
   ({ className, sample, children, ...props }, ref) => (
     <div ref={ref} className={cn("glow-card p-5", className)} {...props}>
-      {sample && <SampleTag className="absolute right-3 top-3" />}
+      {sample && <SampleTag variant="corner" />}
       {children}
     </div>
   ),

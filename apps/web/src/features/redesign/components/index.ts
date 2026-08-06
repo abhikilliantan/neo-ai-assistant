@@ -11,6 +11,7 @@ export { CompanyStatusCard } from "./CompanyStatusCard";
 export { ProjectCard } from "./ProjectCard";
 export { QuickActionButton } from "./QuickActionButton";
 export { SampleTag } from "./SampleTag";
+export type { SampleTagProps } from "./SampleTag";
 export { Delta } from "./Delta";
 
 export type { GlowCardProps } from "./GlowCard";
