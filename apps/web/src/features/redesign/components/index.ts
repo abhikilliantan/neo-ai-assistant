@@ -14,6 +14,7 @@ export { ProjectCard } from "./ProjectCard";
 export { QuickActionButton } from "./QuickActionButton";
 export { SampleTag } from "./SampleTag";
 export type { SampleTagProps } from "./SampleTag";
+export { DemoModeProvider, useDemoMode, SectionSampleChip, DemoToggle } from "./DemoMode";
 export { Delta } from "./Delta";
 
 export type { GlowCardProps } from "./GlowCard";

@@ -1,4 +1,7 @@
+"use client";
+
 import { cn } from "@/lib/cn";
+import { useDemoMode } from "./DemoMode";
 
 export interface SampleTagProps {
   /** "inline" sits next to a title (default); "corner" floats top-right of a
@@ -7,8 +10,11 @@ export interface SampleTagProps {
   className?: string;
 }
 
-/** Subtle "sample" chip for any widget not yet backed by real data. */
+/** Subtle "sample" chip for any widget not yet backed by real data.
+ *  Hidden while global Demo mode is ON (see DemoMode). */
 export function SampleTag({ variant = "inline", className }: SampleTagProps) {
+  const demo = useDemoMode();
+  if (demo) return null;
   return (
     <span
       className={cn(

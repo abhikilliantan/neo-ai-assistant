@@ -1,11 +1,14 @@
 "use client";
 
 import * as React from "react";
+import { MonitorPlay } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-/** Demo mode hides sample-data chips for a clean presentation. Default ON.
- *  When OFF, each section header shows ONE small "sample data" chip. */
-const DemoModeContext = React.createContext(true);
+/** Global Demo mode: ON hides every sample chip for a clean presentation; OFF
+ *  reveals them. Provided by the /neo AppShell (default ON). The context
+ *  default is OFF so chips still show anywhere NOT wrapped (e.g. /design-system).
+ */
+const DemoModeContext = React.createContext(false);
 
 export function DemoModeProvider({
   value,
@@ -38,7 +41,7 @@ export function SectionSampleChip({ className }: { className?: string }) {
   );
 }
 
-/** Header switch that controls demo mode. */
+/** Compact top-bar switch for global demo mode. */
 export function DemoToggle({
   checked,
   onChange,
@@ -52,13 +55,15 @@ export function DemoToggle({
       role="switch"
       aria-checked={checked}
       aria-label="Demo mode — hide sample-data chips"
+      title="Demo mode — hide sample-data chips"
       onClick={() => onChange(!checked)}
-      className="flex items-center gap-2 rounded-control border border-rd-border bg-rd-card px-3 py-2 text-sm text-rd-body transition-colors hover:border-rd-border-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rd-cyan/60"
+      className="flex items-center gap-2 rounded-control border border-rd-border bg-rd-card px-2.5 py-2 text-sm text-rd-body transition-colors hover:border-rd-border-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rd-cyan/60"
     >
-      <span className="text-rd-body">Demo mode</span>
+      <MonitorPlay className="h-4 w-4 shrink-0" aria-hidden />
+      <span className="hidden lg:inline">Demo</span>
       <span
         className={cn(
-          "relative h-5 w-9 rounded-full transition-colors",
+          "relative h-5 w-9 shrink-0 rounded-full transition-colors",
           checked ? "bg-rd-grad" : "bg-rd-panel",
         )}
       >

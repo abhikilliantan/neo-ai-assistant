@@ -14,10 +14,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { AlertRow } from "@/features/redesign/components";
+import { AlertRow, SectionSampleChip } from "@/features/redesign/components";
 import { navHref } from "@/features/redesign/shell";
 import { ALERTS, MEETINGS, RECOMMENDATIONS } from "./data";
-import { SectionSampleChip } from "./DemoMode";
 
 type Tone = "cyan" | "green" | "rose" | "neutral";
 

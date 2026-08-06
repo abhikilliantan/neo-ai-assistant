@@ -1,7 +1,6 @@
 import { ArrowUpRight } from "lucide-react";
-import { LineTrend, RingGauge } from "@/features/redesign/components";
+import { LineTrend, RingGauge, SectionSampleChip } from "@/features/redesign/components";
 import { EFFICIENCY_TREND } from "./data";
-import { SectionSampleChip } from "./DemoMode";
 
 export function EfficiencyPanel() {
   return (

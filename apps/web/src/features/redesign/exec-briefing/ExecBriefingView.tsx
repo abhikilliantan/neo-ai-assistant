@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { CalendarDays, Download, Sparkles } from "lucide-react";
 import type { NodeStatus } from "@neo/shared-types";
 import { useDashboardData } from "@/features/redesign/dashboard/data";
@@ -10,7 +9,6 @@ import { EnterpriseOverview } from "./EnterpriseOverview";
 import { EfficiencyPanel } from "./EfficiencyPanel";
 import { KeyPerformanceSnapshot } from "./KeyPerformanceSnapshot";
 import { ExecRightRail } from "./ExecRightRail";
-import { DemoModeProvider, DemoToggle } from "./DemoMode";
 
 const COUNT_KEY: Record<NodeStatus, "onTrack" | "atRisk" | "delayed"> = {
   on_track: "onTrack",
@@ -22,8 +20,6 @@ const COUNT_KEY: Record<NodeStatus, "onTrack" | "atRisk" | "delayed"> = {
  *  date renders identically on both sides — no hydration mismatch. */
 export function ExecBriefingView({ todayLabel }: { todayLabel: string }) {
   const d = useDashboardData();
-  // Demo mode ON (default) hides sample-data chips for a clean presentation.
-  const [demoMode, setDemoMode] = React.useState(true);
 
   const pcts = d.projects.map((p) => p.progress_pct).filter((v): v is number => v != null);
   const projectsHealth = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
@@ -37,58 +33,55 @@ export function ExecBriefingView({ todayLabel }: { todayLabel: string }) {
   );
 
   return (
-    <DemoModeProvider value={demoMode}>
-      <div className="mx-auto max-w-[1600px] space-y-6">
-        {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-rd-heading">
-              Executive Briefing
-              <Sparkles className="h-5 w-5 text-rd-violet" aria-hidden />
-            </h1>
-            <p className="mt-1 text-sm text-rd-body">
-              Your daily intelligence summary across all companies, projects and functions.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <DemoToggle checked={demoMode} onChange={setDemoMode} />
-            <span className="flex items-center gap-2 rounded-control border border-rd-border bg-rd-card px-3 py-2 text-sm text-rd-body">
-              <CalendarDays className="h-4 w-4 text-rd-cyan" aria-hidden />
-              {todayLabel}
-            </span>
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-control bg-rd-grad px-4 py-2 text-sm font-semibold text-white transition-[filter] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rd-cyan/60"
-            >
-              <Download className="h-4 w-4" aria-hidden />
-              Download Briefing
-            </button>
-          </div>
+    <div className="mx-auto max-w-[1600px] space-y-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-rd-heading">
+            Executive Briefing
+            <Sparkles className="h-5 w-5 text-rd-violet" aria-hidden />
+          </h1>
+          <p className="mt-1 text-sm text-rd-body">
+            Your daily intelligence summary across all companies, projects and functions.
+          </p>
         </div>
-
-        <KpiRow projectsHealth={projectsHealth} overviewsReady={d.overviewsReady} />
-
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-w-0 space-y-6">
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <BriefingList
-                projectsHealth={projectsHealth}
-                counts={counts}
-                overviewsReady={d.overviewsReady}
-              />
-              <div className="space-y-6">
-                <EnterpriseOverview />
-                <EfficiencyPanel />
-              </div>
-            </div>
-            <KeyPerformanceSnapshot />
-          </div>
-
-          <aside className="min-w-0">
-            <ExecRightRail />
-          </aside>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-2 rounded-control border border-rd-border bg-rd-card px-3 py-2 text-sm text-rd-body">
+            <CalendarDays className="h-4 w-4 text-rd-cyan" aria-hidden />
+            {todayLabel}
+          </span>
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-control bg-rd-grad px-4 py-2 text-sm font-semibold text-white transition-[filter] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rd-cyan/60"
+          >
+            <Download className="h-4 w-4" aria-hidden />
+            Download Briefing
+          </button>
         </div>
       </div>
-    </DemoModeProvider>
+
+      <KpiRow projectsHealth={projectsHealth} overviewsReady={d.overviewsReady} />
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0 space-y-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <BriefingList
+              projectsHealth={projectsHealth}
+              counts={counts}
+              overviewsReady={d.overviewsReady}
+            />
+            <div className="space-y-6">
+              <EnterpriseOverview />
+              <EfficiencyPanel />
+            </div>
+          </div>
+          <KeyPerformanceSnapshot />
+        </div>
+
+        <aside className="min-w-0">
+          <ExecRightRail />
+        </aside>
+      </div>
+    </div>
   );
 }

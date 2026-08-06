@@ -1,6 +1,10 @@
-import { MetricCard, MiniBars, SectionHeader } from "@/features/redesign/components";
+import {
+  MetricCard,
+  MiniBars,
+  SectionHeader,
+  SectionSampleChip,
+} from "@/features/redesign/components";
 import { SNAPSHOT } from "./data";
-import { SectionSampleChip } from "./DemoMode";
 
 /** 8-card KPI strip. All sample (no live endpoint) — one chip on the header. */
 export function KeyPerformanceSnapshot() {

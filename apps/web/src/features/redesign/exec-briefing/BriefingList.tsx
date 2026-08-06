@@ -12,9 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { Delta, GlowCard } from "@/features/redesign/components";
+import { Delta, GlowCard, SectionSampleChip } from "@/features/redesign/components";
 import { round } from "@/features/redesign/components/format";
-import { SectionSampleChip } from "./DemoMode";
 
 type StatusTone = "good" | "excellent" | "attention" | "high" | "action" | "on-track" | "new";
 

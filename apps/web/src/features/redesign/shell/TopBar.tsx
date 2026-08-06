@@ -10,10 +10,13 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { DemoToggle } from "@/features/redesign/components";
 
 interface TopBarProps {
   collapsed: boolean;
   onToggle: () => void;
+  demoMode: boolean;
+  onDemoChange: (v: boolean) => void;
 }
 
 const QUICK_QUESTIONS = [
@@ -23,7 +26,7 @@ const QUICK_QUESTIONS = [
   "Employees needing attention?",
 ];
 
-export function TopBar({ collapsed, onToggle }: TopBarProps) {
+export function TopBar({ collapsed, onToggle, demoMode, onDemoChange }: TopBarProps) {
   return (
     <header className="sticky top-0 z-20 border-b border-rd-border bg-rd-panel/80 backdrop-blur-xl">
       <div className="flex items-center gap-4 px-4 py-3 sm:px-6">
@@ -65,6 +68,7 @@ export function TopBar({ collapsed, onToggle }: TopBarProps) {
 
         {/* Right */}
         <div className="flex shrink-0 items-center gap-1.5">
+          <DemoToggle checked={demoMode} onChange={onDemoChange} />
           <IconBadge icon={Bell} label="AI Alerts" count={12} />
           <IconBadge icon={CalendarClock} label="Meetings" count={6} />
           <IconButton icon={HelpCircle} label="Help" />
