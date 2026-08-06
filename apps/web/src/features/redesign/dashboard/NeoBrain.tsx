@@ -38,10 +38,10 @@ const RIGHT: Node[] = [
   { label: "Calendar", icon: CalendarClock, href: navHref("meetings") },
 ];
 
-/** The glowing NEO "brain" hero. CSS/SVG core by default; pass `imageSrc` to
- *  drop in a real brain asset later (rendered over the core, rings kept as a
- *  glowing frame). Module nodes are REAL navigation links. */
-export function NeoBrain({ imageSrc }: { imageSrc?: string }) {
+/** The glowing NEO "brain" hero. Renders the brain asset (black background
+ *  dropped via mix-blend screen) with the NEO label overlaid; `imageSrc`
+ *  defaults to the shipped render. Module nodes are REAL navigation links. */
+export function NeoBrain({ imageSrc = "/enterprise-brain.png" }: { imageSrc?: string }) {
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 sm:gap-5">
       <div className="flex flex-col gap-2">
@@ -61,35 +61,22 @@ export function NeoBrain({ imageSrc }: { imageSrc?: string }) {
   );
 }
 
-function Core({ imageSrc }: { imageSrc?: string }) {
+function Core({ imageSrc }: { imageSrc: string }) {
   return (
-    <div className="relative mx-auto flex aspect-square w-full max-w-[220px] items-center justify-center">
-      {/* radial glow */}
-      <div
-        className="absolute inset-0 rounded-full opacity-70 blur-2xl"
-        style={{ background: "var(--rd-grad)" }}
-        aria-hidden
+    <div className="relative mx-auto aspect-square w-full max-w-[240px]">
+      {/* mix-blend screen drops the image's black background so only the glow
+          shows over the dark panel — no visible bounding box. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imageSrc}
+        alt="NEO enterprise brain"
+        className="h-full w-full object-contain"
+        style={{ mixBlendMode: "screen" }}
       />
-      {/* concentric rings */}
-      <div className="absolute inset-2 rounded-full border border-rd-border-hover/60" aria-hidden />
-      <div className="absolute inset-6 rounded-full border border-rd-border" aria-hidden />
-      <div className="gradient-ring absolute inset-10 rounded-full" aria-hidden />
-
-      {/* asset hook: replace this inner disc with a real brain image via imageSrc */}
-      {imageSrc ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={imageSrc}
-          alt="NEO core"
-          className="relative z-10 h-24 w-24 rounded-full object-cover"
-        />
-      ) : (
-        <div className="relative z-10 flex h-24 w-24 items-center justify-center rounded-full border border-rd-border-hover bg-rd-base/70 backdrop-blur-sm">
-          <span className="bg-rd-grad bg-clip-text text-lg font-bold tracking-[0.2em] text-transparent">
-            NEO
-          </span>
-        </div>
-      )}
+      {/* NEO label overlaid on the brain's bright core */}
+      <span className="pointer-events-none absolute left-1/2 top-[45%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-rd-base/40 px-2.5 py-0.5 text-sm font-bold tracking-[0.28em] text-rd-heading backdrop-blur-[2px]">
+        NEO
+      </span>
     </div>
   );
 }
