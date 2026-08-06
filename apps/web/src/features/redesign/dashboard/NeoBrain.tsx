@@ -65,7 +65,8 @@ function Core({ imageSrc }: { imageSrc: string }) {
   return (
     <div className="relative mx-auto aspect-square w-full max-w-[240px]">
       {/* mix-blend screen drops the image's black background so only the glow
-          shows over the dark panel — no visible bounding box. */}
+          shows over the dark panel. "NEO" is baked into the image's glowing
+          core — no code overlay. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={imageSrc}
@@ -73,10 +74,6 @@ function Core({ imageSrc }: { imageSrc: string }) {
         className="h-full w-full object-contain"
         style={{ mixBlendMode: "screen" }}
       />
-      {/* NEO label overlaid on the brain's bright core */}
-      <span className="pointer-events-none absolute left-1/2 top-[45%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-rd-base/40 px-2.5 py-0.5 text-sm font-bold tracking-[0.28em] text-rd-heading backdrop-blur-[2px]">
-        NEO
-      </span>
     </div>
   );
 }
