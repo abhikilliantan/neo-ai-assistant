@@ -90,13 +90,20 @@ export const KPIS: SalesKpi[] = [
 // Stepped cyan→violet brand ramp (interpolated --rd-cyan 198 93% 60% →
 // --rd-violet 258 90% 66%). Shared by the pipeline funnel and the stage donut so
 // the two read as one on-brand gradient — no off-brand orange/green/teal.
-export const PIPE_RAMP = [
-  "hsl(198 93% 60%)",
-  "hsl(213 92% 62%)",
-  "hsl(228 91% 63%)",
-  "hsl(243 91% 65%)",
-  "hsl(258 90% 66%)",
-];
+// Interpolate the brand ramp between --rd-cyan (198 93% 60%) and --rd-violet
+// (258 90% 66%) into `n` stepped, on-brand colors — no off-brand orange/green/
+// teal. Used by the pipeline funnel, the stage donut, and Deal Health.
+function brandRamp(n: number): string[] {
+  const from = [198, 93, 60];
+  const to = [258, 90, 66];
+  return Array.from({ length: n }, (_, i) => {
+    const t = n > 1 ? i / (n - 1) : 0;
+    const [h, s, l] = from.map((c, k) => Math.round(c + (to[k] - c) * t));
+    return `hsl(${h} ${s}% ${l}%)`;
+  });
+}
+
+export const PIPE_RAMP = brandRamp(5);
 
 // Sales Pipeline funnel
 export const PIPELINE: FunnelRow[] = [
@@ -237,6 +244,11 @@ export const REGIONS: { label: string; value: string; delta: number }[] = [
   { label: "Others", value: "$24K", delta: 7 },
 ];
 
+// Deal Health is a distribution, not a red/amber alert — recolor to the same
+// cyan→violet brand ramp so the whole page reads on-brand. (Semantic red/amber
+// stays only on the AI-recommendation alert icons.)
+const DEAL_RAMP = brandRamp(4);
+
 export const DEAL_HEALTH: {
   total: number;
   slices: { label: string; count: number; pct: string; color: string }[];
@@ -244,10 +256,10 @@ export const DEAL_HEALTH: {
 } = {
   total: 96,
   slices: [
-    { label: "Healthy", count: 42, pct: "43.8%", color: "hsl(var(--rd-green))" },
-    { label: "At Risk", count: 32, pct: "33.3%", color: "hsl(var(--rd-amber))" },
-    { label: "Critical", count: 12, pct: "12.5%", color: "hsl(var(--rd-rose))" },
-    { label: "On Hold", count: 10, pct: "10.4%", color: "hsl(var(--rd-muted))" },
+    { label: "Healthy", count: 42, pct: "43.8%", color: DEAL_RAMP[0] },
+    { label: "At Risk", count: 32, pct: "33.3%", color: DEAL_RAMP[1] },
+    { label: "Critical", count: 12, pct: "12.5%", color: DEAL_RAMP[2] },
+    { label: "On Hold", count: 10, pct: "10.4%", color: DEAL_RAMP[3] },
   ],
   insight: "12 deals are at risk of slipping this month. Focus on 3 critical deals worth $1.2M.",
 };
