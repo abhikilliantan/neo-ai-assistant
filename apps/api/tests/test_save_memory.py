@@ -357,3 +357,131 @@ async def test_acceptance_remember_call_me_boss(
         )
         assert r2.status_code == 200, r2.text
         assert "Boss" in r2.json()["message"]["content"]
+
+
+# --- always-on standing preferences (the cross-chat fix) --------------------
+
+
+async def _seed_memory(
+    app_session_factory,  # type: ignore[no-untyped-def]
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    content: str,
+    kind: str,
+) -> None:
+    result = await MockEmbeddingProvider().embed(texts=[content])
+    s = await app_session_factory(tenant_id)
+    try:
+        await MemoryRepository(s).add(
+            organization_id=tenant_id,
+            user_id=user_id,
+            content=content,
+            embedding=result.vectors[0],
+            embedding_model=result.model,
+            kind=kind,
+            source="user",
+        )
+        await s.commit()
+    finally:
+        await s.close()
+
+
+class _SystemEchoProvider:
+    """Records the system-message context it received and greets by name if the
+    context mentions one. Lets a test prove WHAT reached the model."""
+
+    def __init__(self) -> None:
+        self.system_seen: list[str] = []
+
+    async def complete(
+        self,
+        *,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: ToolExecutor | None = None,
+        model: str | None = None,
+        temperature: float = 0.7,
+    ) -> ChatCompletion:
+        ctx = "\n".join(m.content for m in messages if m.role == "system")
+        self.system_seen.append(ctx)
+        name = "Boss" if "Boss" in ctx else "there"
+        return ChatCompletion(
+            content=f"Hello, {name}!", model="scripted", usage=None, finish_reason="stop"
+        )
+
+    async def stream(
+        self, *, messages: list[ChatMessage], model: str | None = None, temperature: float = 0.7
+    ) -> AsyncIterator[ChatStreamEvent]:
+        raise NotImplementedError  # non-streaming /chat only
+        yield  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_preference_injected_on_unrelated_message_without_semantic_match(
+    db_app,  # type: ignore[no-untyped-def]
+    app_session_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    """A saved preference reaches a brand-new chat whose first message ('hi') is
+    NOT semantically related — proving the always-on injection, independent of
+    similarity. Semantic retrieval is turned OFF via an impossible threshold, so
+    ONLY the standing-preferences path can deliver it."""
+    provider = _SystemEchoProvider()
+    db_app.state.chat_provider = provider
+    db_app.state.settings.memory_retrieval_min_similarity = 2.0  # cosine ≤ 1 → semantic off
+
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        reg = await _register(c, "standing-pref@example.com")
+        await _seed_memory(
+            app_session_factory,
+            tenant_id=UUID(reg["active_tenant_id"]),
+            user_id=UUID(reg["user_id"]),
+            content="The user prefers to be called Boss.",
+            kind="preference",
+        )
+        r = await c.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers=_auth(reg["access_token"]),
+        )
+        assert r.status_code == 200, r.text
+        assert "Boss" in r.json()["message"]["content"]
+
+    # The preference was delivered via the standing-preferences block.
+    assert "Known user preferences" in provider.system_seen[-1]
+    assert "Boss" in provider.system_seen[-1]
+
+
+@pytest.mark.asyncio
+async def test_fact_memory_is_not_auto_injected(
+    db_app,  # type: ignore[no-untyped-def]
+    app_session_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    """A kind='fact' memory must NOT be force-injected every turn — it only
+    surfaces via semantic search_memory. With semantic retrieval off and an
+    unrelated message, the fact must be absent from the injected context."""
+    provider = _SystemEchoProvider()
+    db_app.state.chat_provider = provider
+    db_app.state.settings.memory_retrieval_min_similarity = 2.0  # semantic off
+
+    transport = ASGITransport(app=db_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        reg = await _register(c, "no-fact-inject@example.com")
+        await _seed_memory(
+            app_session_factory,
+            tenant_id=UUID(reg["active_tenant_id"]),
+            user_id=UUID(reg["user_id"]),
+            content="The user's favorite color is teal.",
+            kind="fact",
+        )
+        r = await c.post(
+            "/api/v1/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers=_auth(reg["access_token"]),
+        )
+        assert r.status_code == 200, r.text
+
+    ctx = provider.system_seen[-1] if provider.system_seen else ""
+    assert "teal" not in ctx.lower()  # facts are never auto-injected
+    assert "Known user preferences" not in ctx  # nothing standing to inject

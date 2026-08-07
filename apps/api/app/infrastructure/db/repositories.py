@@ -399,6 +399,31 @@ class MemoryRepository:
             stmt = stmt.offset(offset).limit(limit)
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_by_kinds(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        kinds: Sequence[str],
+        limit: int,
+    ) -> list[Memory]:
+        """Most-recent live memories of the given kinds, tenant + user scoped.
+
+        Backs the always-on standing-preferences context: no embedding, no
+        similarity — a bare recency-capped fetch of preference/instruction rows
+        so they apply on every turn regardless of the message.
+        """
+        stmt = (
+            select(Memory)
+            .where(Memory.organization_id == organization_id)
+            .where(Memory.user_id == user_id)
+            .where(Memory.deleted_at.is_(None))
+            .where(Memory.kind.in_(tuple(kinds)))
+            .order_by(Memory.created_at.desc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def get_by_id(self, memory_id: UUID) -> Memory | None:
         # RLS filters cross-tenant on read; the endpoint layer still checks
         # user_id ownership so same-tenant users can't touch each other's rows.
