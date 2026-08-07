@@ -87,19 +87,30 @@ export const KPIS: SalesKpi[] = [
   },
 ];
 
+// Stepped cyan→violet brand ramp (interpolated --rd-cyan 198 93% 60% →
+// --rd-violet 258 90% 66%). Shared by the pipeline funnel and the stage donut so
+// the two read as one on-brand gradient — no off-brand orange/green/teal.
+export const PIPE_RAMP = [
+  "hsl(198 93% 60%)",
+  "hsl(213 92% 62%)",
+  "hsl(228 91% 63%)",
+  "hsl(243 91% 65%)",
+  "hsl(258 90% 66%)",
+];
+
 // Sales Pipeline funnel
 export const PIPELINE: FunnelRow[] = [
-  { label: "Prospecting", value: "$2.31M", sub: "265", pct: "68%", color: "hsl(var(--rd-cyan))" },
+  { label: "Prospecting", value: "$2.31M", sub: "265", pct: "68%", color: PIPE_RAMP[0] },
   {
     label: "Qualification",
     value: "$1.89M",
     sub: "158",
     pct: "51%",
-    color: "hsl(var(--rd-violet))",
+    color: PIPE_RAMP[1],
   },
-  { label: "Proposal", value: "$2.47M", pct: "38%", color: "hsl(var(--rd-amber))" },
-  { label: "Negotiation", value: "$1.45M", sub: "48", pct: "33%", color: "hsl(var(--rd-cyan-2))" },
-  { label: "Closed Won", value: "$920K", sub: "32", pct: "67%", color: "hsl(var(--rd-green))" },
+  { label: "Proposal", value: "$2.47M", pct: "38%", color: PIPE_RAMP[2] },
+  { label: "Negotiation", value: "$1.45M", sub: "48", pct: "33%", color: PIPE_RAMP[3] },
+  { label: "Closed Won", value: "$920K", sub: "32", pct: "67%", color: PIPE_RAMP[4] },
 ];
 export const PIPELINE_TOTAL = "$8.74M";
 
@@ -125,29 +136,29 @@ export const STAGES: {
     value: 26.4,
     amount: "$2.31M",
     pct: "26.4%",
-    color: "hsl(var(--rd-cyan))",
+    color: PIPE_RAMP[0],
   },
   {
     label: "Qualification",
     value: 21.6,
     amount: "$1.89M",
     pct: "21.6%",
-    color: "hsl(var(--rd-cyan-2))",
+    color: PIPE_RAMP[1],
   },
-  { label: "Proposal", value: 28.3, amount: "$2.47M", pct: "28.3%", color: "hsl(var(--rd-amber))" },
+  { label: "Proposal", value: 28.3, amount: "$2.47M", pct: "28.3%", color: PIPE_RAMP[2] },
   {
     label: "Negotiation",
     value: 16.6,
     amount: "$1.45M",
     pct: "16.6%",
-    color: "hsl(var(--rd-green))",
+    color: PIPE_RAMP[3],
   },
   {
     label: "Closed Won",
     value: 10.5,
     amount: "$920K",
     pct: "10.5%",
-    color: "hsl(var(--rd-violet))",
+    color: PIPE_RAMP[4],
   },
 ];
 
