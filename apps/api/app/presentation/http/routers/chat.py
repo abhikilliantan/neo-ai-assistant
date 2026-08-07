@@ -30,6 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner, agent_for_request
+from app.ai.memory import save_memory_deduped
 from app.ai.tools import DatasetSessionFactory, build_streaming_request_tool_registry
 from app.ai.tools.search_documents import DocumentRepoFactory
 from app.ai.tools.search_memory import MemoryRepoFactory
@@ -195,6 +196,7 @@ async def _extract_and_store_memories(
     user_id: UUID,
     messages: list[ChatMessage],
     assistant_reply: str,
+    dedupe_threshold: float,
 ) -> None:
     """Best-effort: extract durable facts from a completed chat turn, embed
     them, and persist as memories. ANY failure (extractor/embed/DB) is
@@ -213,10 +215,12 @@ async def _extract_and_store_memories(
         facts = await extractor.extract(messages=messages, assistant_reply=assistant_reply)
         if not facts:
             return
-        result = await embedding_provider.embed(
-            texts=[f.content for f in facts],
-            input_type="document",
-        )
+        # Share the SAME dedupe path as the save_memory tool + POST /memories
+        # (embed → search_similar → skip near-dupes), so a preference the model
+        # already saved via the tool isn't stored again by extraction. Each fact
+        # goes through save_memory_deduped (which embeds per-item); source="chat"
+        # keeps this path's provenance distinct from tool ("agent") / API ("user").
+        written = 0
         async with db.sessionmaker() as session, session.begin():
             await session.execute(
                 text("SELECT set_config('app.current_tenant', :t, true)").bindparams(
@@ -224,17 +228,21 @@ async def _extract_and_store_memories(
                 )
             )
             repo = MemoryRepository(session)
-            for fact, vector in zip(facts, result.vectors, strict=True):
-                await repo.add(
+            for fact in facts:
+                _memory, created = await save_memory_deduped(
+                    repo=repo,
+                    embedding_provider=embedding_provider,
                     organization_id=tenant_id,
                     user_id=user_id,
                     content=fact.content,
-                    embedding=vector,
-                    embedding_model=result.model,
+                    dedupe_threshold=dedupe_threshold,
                     kind=fact.kind,
                     source="chat",
                 )
-        log.info("memory.write.success", count=len(facts), user_id=str(user_id))
+                written += int(created)
+        log.info(
+            "memory.write.success", extracted=len(facts), written=written, user_id=str(user_id)
+        )
     except Exception as e:
         log.warning(
             "memory.write.failed",
@@ -457,6 +465,7 @@ async def chat(
         user_id=user.id,
         messages=body.messages,
         assistant_reply=completion.content,
+        dedupe_threshold=settings.memory_dedupe_min_similarity,
     )
 
     return ChatResponse(
@@ -820,6 +829,7 @@ async def chat_stream(
             user_id=user.id,
             messages=body.messages,
             assistant_reply=assistant_content,
+            dedupe_threshold=settings.memory_dedupe_min_similarity,
         )
 
     return StreamingResponse(

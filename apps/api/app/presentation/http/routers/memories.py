@@ -15,14 +15,24 @@ all collapse to 404 — no existence oracle.
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 from fastapi.responses import Response
 
+from app.ai.memory import save_memory_deduped
+from app.infrastructure.db.models.memory import Memory
 from app.infrastructure.db.repositories import MemoryRepository, UserPreferenceRepository
-from app.presentation.http.deps import CurrentTenantDep, CurrentUserDep, TenantSessionDep
+from app.presentation.http.deps import (
+    CurrentTenantDep,
+    CurrentUserDep,
+    EmbeddingProviderDep,
+    SettingsDep,
+    TenantSessionDep,
+)
 from app.presentation.http.schemas.memory import (
+    MemoryCreateRequest,
     MemoryOut,
     PreferenceOut,
     PreferenceUpsertRequest,
@@ -33,6 +43,17 @@ from app.shared.exceptions.common import NotFoundError
 router = APIRouter(prefix="/api/v1", tags=["memories"])
 
 
+def _to_out(m: Memory) -> MemoryOut:
+    """Whitelist ORM → response: never leaks embedding / org / user / deleted_at."""
+    return MemoryOut(
+        id=m.id,
+        content=m.content,
+        kind=m.kind,
+        source=m.source,
+        created_at=m.created_at,
+    )
+
+
 # --- memories ---------------------------------------------------------------
 
 
@@ -41,6 +62,8 @@ async def list_memories(
     user: CurrentUserDep,
     tenant_id: CurrentTenantDep,
     session: TenantSessionDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[MemoryOut]:
     if tenant_id is None:
         raise AuthenticationError("user has no active tenant")
@@ -48,17 +71,38 @@ async def list_memories(
         organization_id=tenant_id,
         user_id=user.id,
         active_only=True,
+        limit=limit,
+        offset=offset,
     )
-    return [
-        MemoryOut(
-            id=m.id,
-            content=m.content,
-            kind=m.kind,
-            source=m.source,
-            created_at=m.created_at,
-        )
-        for m in rows
-    ]
+    return [_to_out(m) for m in rows]
+
+
+@router.post("/memories", response_model=MemoryOut, status_code=status.HTTP_201_CREATED)
+async def create_memory(
+    body: MemoryCreateRequest,
+    user: CurrentUserDep,
+    tenant_id: CurrentTenantDep,
+    session: TenantSessionDep,
+    embedding_provider: EmbeddingProviderDep,
+    settings: SettingsDep,
+) -> MemoryOut:
+    """Create a memory (user-initiated). Embeds the content and dedupes against
+    the caller's existing memories via the SAME helper the save_memory tool and
+    the chat-extraction path use, so an equivalent memory is never stored twice
+    (a near-dupe returns the existing row with 201 — idempotent for the UI)."""
+    if tenant_id is None:
+        raise AuthenticationError("user has no active tenant")
+    memory, _created = await save_memory_deduped(
+        repo=MemoryRepository(session),
+        embedding_provider=embedding_provider,
+        organization_id=tenant_id,
+        user_id=user.id,
+        content=body.content,
+        dedupe_threshold=settings.memory_dedupe_min_similarity,
+        kind=body.kind,
+        source="user",
+    )
+    return _to_out(memory)
 
 
 @router.delete("/memories/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)

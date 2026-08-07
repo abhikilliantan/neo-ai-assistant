@@ -382,6 +382,8 @@ class MemoryRepository:
         organization_id: UUID,
         user_id: UUID,
         active_only: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[Memory]:
         stmt = (
             select(Memory)
@@ -391,6 +393,10 @@ class MemoryRepository:
         if active_only:
             stmt = stmt.where(Memory.deleted_at.is_(None))
         stmt = stmt.order_by(Memory.created_at.desc())
+        # Pagination for GET /memories. `limit=None` preserves the prior
+        # "return everything" behaviour for existing callers.
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def get_by_id(self, memory_id: UUID) -> Memory | None:

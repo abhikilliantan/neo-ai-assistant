@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MemoryOut(BaseModel):
@@ -25,6 +25,15 @@ class MemoryOut(BaseModel):
     kind: str
     source: str | None
     created_at: datetime
+
+
+class MemoryCreateRequest(BaseModel):
+    """User-initiated memory save (POST /memories). `kind` is optional and
+    clamped server-side to the allowed set; `source` is fixed to "user" for
+    this path (the model-initiated save_memory tool stamps "agent")."""
+
+    content: str = Field(min_length=1, max_length=4000)
+    kind: str | None = None
 
 
 class PreferenceOut(BaseModel):
