@@ -6,6 +6,11 @@ export async function listMemories(): Promise<Memory[]> {
   return data;
 }
 
+export async function createMemory(input: { content: string; kind?: string }): Promise<Memory> {
+  const { data } = await http.post<Memory>("/api/v1/memories", input);
+  return data;
+}
+
 export async function deleteMemory(id: string): Promise<void> {
   await http.delete(`/api/v1/memories/${id}`);
 }
