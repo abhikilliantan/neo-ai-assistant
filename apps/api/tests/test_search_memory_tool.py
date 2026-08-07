@@ -374,6 +374,7 @@ async def test_chat_e2e_search_memory_surfaces_content_and_stays_ephemeral(
     assert scripted.tools_seen[-1] is not None
     assert {s["name"] for s in scripted.tools_seen[-1]} == {
         "echo",
+        "save_memory",
         "search_memory",
         "search_documents",
         "list_datasets",

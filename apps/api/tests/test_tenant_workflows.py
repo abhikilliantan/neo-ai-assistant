@@ -303,8 +303,9 @@ async def test_default_agent_never_gets_tenant_workflows(db_app, app_session_fac
     assert "tenant_action" not in default_names  # 7d boundary holds for tenant data
     assert default_names == {
         "echo",
+        "save_memory",
         "search_memory",
         "search_documents",
         "list_datasets",
         "query_dataset",
-    }  # read-only (incl. 1c dataset tools), no workflows at all
+    }  # read-only (incl. 1c dataset tools) + write-scoped save_memory, no workflows

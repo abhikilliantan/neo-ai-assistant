@@ -145,6 +145,7 @@ def build_request_tool_registry(
     the embedding provider, and the resolved (org, user). Never mutates the
     startup registry — a fresh instance every time.
     """
+    del settings  # unused for 6c; future TOOLS_* toggles slot in without churn
     registry = ToolRegistry()
     for tool in _stateless_tools():
         registry.register(tool)
@@ -156,15 +157,9 @@ def build_request_tool_registry(
             user_id=user_id,
         )
     )
-    registry.register(
-        SaveMemoryTool(
-            memory_repo=memory_repo,
-            embedding_provider=embedding_provider,
-            organization_id=organization_id,
-            user_id=user_id,
-            dedupe_threshold=settings.memory_dedupe_min_similarity,
-        )
-    )
+    # NOTE: save_memory is NOT registered here. This non-streaming builder is
+    # legacy/unused in production (both endpoints use the streaming builder); the
+    # live save_memory wiring is in build_streaming_request_tool_registry below.
     return registry
 
 
