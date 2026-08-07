@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     memory_retrieval_enabled: bool = True
     memory_retrieval_top_k: int = 5
     memory_retrieval_min_similarity: float = 0.7
+    # Near-duplicate guard on the WRITE side (save_memory tool + POST /memories +
+    # the post-chat extraction path all share it): before inserting, embed the
+    # content and search existing memories; if the top cosine similarity is >=
+    # this, skip the insert and return the existing row. High (0.95) so only
+    # essentially-restatements are treated as dupes.
+    memory_dedupe_min_similarity: float = 0.95
 
     # --- tools (phase 6b) ---
     # Clean kill switch: when false, BOTH /chat and /chat/stream pass tools=None

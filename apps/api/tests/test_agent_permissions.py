@@ -21,7 +21,7 @@ import structlog.testing
 from httpx import ASGITransport, AsyncClient
 
 from app.ai.agents import AgentRunner, build_agent_registry
-from app.ai.tools import READ_ONLY_TOOL_NAMES, ToolRegistry, WorkflowTool
+from app.ai.tools import READ_ONLY_TOOL_NAMES, WRITE_TOOL_NAMES, ToolRegistry, WorkflowTool
 from app.ai.tools import _assert_all_tools_classified as assert_classified
 from app.ai.workflows import MockWorkflowClient, WorkflowRegistry, build_workflow_registry
 from app.application.ports.agents import AgentDefinition
@@ -69,8 +69,9 @@ def test_default_agent_is_read_only_operator_gets_workflows() -> None:
     operator = registry.get("operator")
     assert assistant is not None and operator is not None
 
-    # Default agent: exactly the read-only tools, no workflow.
-    assert set(assistant.tool_names or []) == set(READ_ONLY_TOOL_NAMES)
+    # Default agent: the read-only tools PLUS the write-scoped save_memory
+    # (tenant-internal), never a workflow.
+    assert set(assistant.tool_names or []) == set(READ_ONLY_TOOL_NAMES) | set(WRITE_TOOL_NAMES)
     assert "create_task" not in (assistant.tool_names or [])
     assert "send_email" not in (assistant.tool_names or [])
 
@@ -249,6 +250,7 @@ async def test_default_agent_never_offered_the_workflow(db_app) -> None:  # type
     assert "create_task" not in names
     assert {
         "echo",
+        "save_memory",
         "search_memory",
         "search_documents",
         "list_datasets",

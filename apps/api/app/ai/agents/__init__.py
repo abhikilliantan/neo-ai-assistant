@@ -22,9 +22,22 @@ from collections.abc import Iterable
 
 from app.ai.agents.registry import AgentRegistry
 from app.ai.agents.runner import DEFAULT_AGENT_NAME, AgentRunner
-from app.ai.tools import READ_ONLY_TOOL_NAMES
+from app.ai.tools import READ_ONLY_TOOL_NAMES, WRITE_TOOL_NAMES
 from app.application.ports.agents import AgentDefinition
 from app.infrastructure.config import Settings
+
+# Shared verbatim by the agents that can persist memory (assistant +
+# project_analyst) so the save behaviour can't drift between them.
+_MEMORY_SAVE_GUIDANCE = (
+    "SAVING MEMORY. When the user asks you to remember something, states a "
+    "lasting preference (how to be addressed, tone, defaults, working style), or "
+    "shares a durable fact about themselves or their work, call `save_memory` "
+    "with a clear self-contained sentence, then confirm in ONE short line "
+    '(e.g. "Got it — I\'ll call you Boss."). Do NOT save one-off chit-chat, '
+    "transient details, or trivia, and never save secrets or credentials. "
+    "Near-duplicates are ignored automatically, so it's safe to save when "
+    "unsure whether it's already stored."
+)
 
 # The global anti-confabulation guardrails, shared verbatim by every grounded
 # agent (default + specialized) so they can't drift apart. Any agent that can
@@ -84,9 +97,14 @@ def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
                 "`query_dataset` with structured filters / group_by / aggregate. Answer "
                 "ONLY from the tool result — state the number and cite the dataset name "
                 "and the tool's `interpreted` description. If no dataset matches, say so "
-                "plainly. NEVER invent or estimate counts.\n\n" + _GROUNDING_GUARDRAILS
+                "plainly. NEVER invent or estimate counts.\n\n"
+                + _MEMORY_SAVE_GUIDANCE
+                + "\n\n"
+                + _GROUNDING_GUARDRAILS
             ),
-            tool_names=read_only,
+            # Read-only lookups PLUS the write-scoped save_memory (stays within
+            # the user's own tenant). recall/operator do NOT get it.
+            tool_names=sorted(READ_ONLY_TOOL_NAMES | WRITE_TOOL_NAMES),
         ),
         AgentDefinition(
             name="recall",
@@ -128,14 +146,18 @@ def _built_in_agents(*, workflow_names: Iterable[str]) -> list[AgentDefinition]:
                 "line; NEVER estimate or invent counts. When asked for a status report, "
                 "present it in a clear executive format, but clearly separate DATA (from "
                 "queries) from JUDGMENT (label judgment as such). If no dataset matches, "
-                "say so.\n\n" + _GROUNDING_GUARDRAILS
+                "say so.\n\n" + _MEMORY_SAVE_GUIDANCE + "\n\n" + _GROUNDING_GUARDRAILS
             ),
             # Specialized for tracker reporting: the dataset tools plus the other
             # read-only lookups the default agent has (search_documents /
-            # search_memory), derived so it stays correct as the read-only set grows.
+            # search_memory), derived so it stays correct as the read-only set grows,
+            # plus the write-scoped save_memory.
             tool_names=sorted(
-                READ_ONLY_TOOL_NAMES
-                & {"list_datasets", "query_dataset", "search_documents", "search_memory"}
+                (
+                    READ_ONLY_TOOL_NAMES
+                    & {"list_datasets", "query_dataset", "search_documents", "search_memory"}
+                )
+                | WRITE_TOOL_NAMES
             ),
         ),
     ]

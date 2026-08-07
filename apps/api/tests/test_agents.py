@@ -124,6 +124,7 @@ def test_build_agent_registry_registers_default_assistant() -> None:
         "echo",
         "list_datasets",
         "query_dataset",
+        "save_memory",
         "search_documents",
         "search_memory",
     ]
@@ -158,6 +159,7 @@ def test_build_agent_registry_registers_default_assistant() -> None:
     assert analyst.tool_names == [
         "list_datasets",
         "query_dataset",
+        "save_memory",
         "search_documents",
         "search_memory",
     ]

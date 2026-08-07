@@ -185,6 +185,7 @@ async def test_stream_runs_search_memory_via_short_session_factory_and_folds_int
         assert scripted.tools_seen[-1] is not None
         assert {s["name"] for s in scripted.tools_seen[-1]} == {
             "echo",
+            "save_memory",
             "search_memory",
             "search_documents",
         }
@@ -551,6 +552,7 @@ async def test_chat_stream_tools_enabled_true_passes_registered_specs(
     # 8d: search_documents is read-only, so it IS offered.
     assert {s["name"] for s in spy.calls[-1]["tools"]} == {
         "echo",
+        "save_memory",
         "search_memory",
         "search_documents",
     }

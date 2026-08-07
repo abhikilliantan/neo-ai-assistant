@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   Bot,
+  Brain,
   Building2,
   ClipboardList,
   Code2,
@@ -78,6 +79,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Intelligence",
     items: [
       { slug: "ai-agents", label: "AI Agents", icon: Bot },
+      { slug: "memories", label: "Memories", icon: Brain },
       { slug: "automation", label: "Automation", icon: Workflow },
       { slug: "analytics", label: "Analytics", icon: BarChart3 },
       { slug: "reports", label: "Reports", icon: ClipboardList },

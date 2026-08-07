@@ -30,6 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.agents import DEFAULT_AGENT_NAME, AgentRunner, agent_for_request
+from app.ai.memory import save_memory_deduped
 from app.ai.tools import DatasetSessionFactory, build_streaming_request_tool_registry
 from app.ai.tools.search_documents import DocumentRepoFactory
 from app.ai.tools.search_memory import MemoryRepoFactory
@@ -175,15 +176,82 @@ async def _retrieve_memory_context(
         return None
 
 
-def _augment_messages(base: list[ChatMessage], memory_context: str | None) -> list[ChatMessage]:
-    """Prepend a system message carrying `memory_context` (or return `base`).
+_PREFERENCES_PREAMBLE = (
+    "Known user preferences (standing instructions — apply these on EVERY turn, "
+    "even when unrelated to the current message; e.g. how to address the user):"
+)
+# Standing memories are injected every turn regardless of similarity. Semantic
+# search_memory still handles facts/summaries on demand.
+_STANDING_KINDS: tuple[str, ...] = ("preference", "instruction")
+_STANDING_LIMIT = 20
+_STANDING_MAX_LINE = 200  # per-line cap so one long memory can't bloat the prompt
+
+
+async def _standing_preferences_context(
+    db: Database,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    limit: int = _STANDING_LIMIT,
+) -> str | None:
+    """Always-on context: the user's preference/instruction memories, injected
+    on EVERY turn regardless of the message — standing prefs must not depend on
+    semantic similarity (the "call me Boss" then bare "hi" gap).
+
+    Recency-ordered, identical lines de-duped, per-line + count capped. Best
+    effort: any failure returns None and never breaks chat.
+    """
+    log = get_logger("memory.preferences")
+    try:
+        async with db.sessionmaker() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.current_tenant', :t, true)").bindparams(
+                    t=str(tenant_id)
+                )
+            )
+            rows = await MemoryRepository(session).list_by_kinds(
+                organization_id=tenant_id,
+                user_id=user_id,
+                kinds=_STANDING_KINDS,
+                limit=limit,
+            )
+        seen: set[str] = set()
+        lines: list[str] = []
+        for m in rows:  # recency desc from the repo
+            content = " ".join(m.content.split()).strip()
+            if not content:
+                continue
+            if len(content) > _STANDING_MAX_LINE:
+                content = content[: _STANDING_MAX_LINE - 1].rstrip() + "…"
+            key = content.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"- {content}")
+        log.info("memory.preferences", injected=len(lines), user_id=str(user_id))
+        if not lines:
+            return None
+        return _PREFERENCES_PREAMBLE + "\n" + "\n".join(lines)
+    except Exception as e:
+        log.warning(
+            "memory.preferences.failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            user_id=str(user_id),
+        )
+        return None
+
+
+def _augment_messages(base: list[ChatMessage], *contexts: str | None) -> list[ChatMessage]:
+    """Prepend a system message for each non-empty context block, in order.
 
     Returns a NEW list — never mutates `base`, so downstream code that reads
-    `body.messages` (persistence, 5c memory write) is untouched.
+    `body.messages` (persistence, memory write) is untouched. Callers pass the
+    standing-preferences block first, then the semantic-retrieval block, so
+    standing preferences lead the injected context.
     """
-    if memory_context is None:
-        return base
-    return [ChatMessage(role="system", content=memory_context), *base]
+    systems = [ChatMessage(role="system", content=c) for c in contexts if c]
+    return [*systems, *base] if systems else base
 
 
 async def _extract_and_store_memories(
@@ -195,6 +263,7 @@ async def _extract_and_store_memories(
     user_id: UUID,
     messages: list[ChatMessage],
     assistant_reply: str,
+    dedupe_threshold: float,
 ) -> None:
     """Best-effort: extract durable facts from a completed chat turn, embed
     them, and persist as memories. ANY failure (extractor/embed/DB) is
@@ -213,10 +282,12 @@ async def _extract_and_store_memories(
         facts = await extractor.extract(messages=messages, assistant_reply=assistant_reply)
         if not facts:
             return
-        result = await embedding_provider.embed(
-            texts=[f.content for f in facts],
-            input_type="document",
-        )
+        # Share the SAME dedupe path as the save_memory tool + POST /memories
+        # (embed → search_similar → skip near-dupes), so a preference the model
+        # already saved via the tool isn't stored again by extraction. Each fact
+        # goes through save_memory_deduped (which embeds per-item); source="chat"
+        # keeps this path's provenance distinct from tool ("agent") / API ("user").
+        written = 0
         async with db.sessionmaker() as session, session.begin():
             await session.execute(
                 text("SELECT set_config('app.current_tenant', :t, true)").bindparams(
@@ -224,17 +295,21 @@ async def _extract_and_store_memories(
                 )
             )
             repo = MemoryRepository(session)
-            for fact, vector in zip(facts, result.vectors, strict=True):
-                await repo.add(
+            for fact in facts:
+                _memory, created = await save_memory_deduped(
+                    repo=repo,
+                    embedding_provider=embedding_provider,
                     organization_id=tenant_id,
                     user_id=user_id,
                     content=fact.content,
-                    embedding=vector,
-                    embedding_model=result.model,
+                    dedupe_threshold=dedupe_threshold,
                     kind=fact.kind,
                     source="chat",
                 )
-        log.info("memory.write.success", count=len(facts), user_id=str(user_id))
+                written += int(created)
+        log.info(
+            "memory.write.success", extracted=len(facts), written=written, user_id=str(user_id)
+        )
     except Exception as e:
         log.warning(
             "memory.write.failed",
@@ -358,7 +433,13 @@ async def chat(
     # runs AFTER the response as a background task, so the just-being-extracted
     # fact cannot leak into this turn's context.
     memory_context: str | None = None
+    standing_context: str | None = None
     if settings.memory_retrieval_enabled:
+        # Always-on: preferences/instructions injected regardless of the message.
+        standing_context = await _standing_preferences_context(
+            db, tenant_id=tenant_id, user_id=user.id
+        )
+        # Similarity-gated: facts relevant to THIS message.
         memory_context = await _retrieve_memory_context(
             db,
             embedding_provider,
@@ -368,7 +449,8 @@ async def chat(
             top_k=settings.memory_retrieval_top_k,
             min_similarity=settings.memory_retrieval_min_similarity,
         )
-    augmented = _augment_messages(body.messages, memory_context)
+    # Standing preferences lead, then the semantic-fact block.
+    augmented = _augment_messages(body.messages, standing_context, memory_context)
 
     # 7f-2: resolve tenant workflows (built-ins + this tenant's enabled rows),
     # rebind the client to their URLs, and expand operator's per-request perms.
@@ -457,6 +539,7 @@ async def chat(
         user_id=user.id,
         messages=body.messages,
         assistant_reply=completion.content,
+        dedupe_threshold=settings.memory_dedupe_min_similarity,
     )
 
     return ChatResponse(
@@ -693,7 +776,13 @@ async def chat_stream(
     # Memory retrieval — its OWN short session, closed BEFORE we return
     # StreamingResponse. Never held across the LLM stream.
     memory_context: str | None = None
+    standing_context: str | None = None
     if settings.memory_retrieval_enabled:
+        # Always-on: preferences/instructions injected regardless of the message.
+        standing_context = await _standing_preferences_context(
+            db, tenant_id=tenant_id, user_id=user.id
+        )
+        # Similarity-gated: facts relevant to THIS message.
         memory_context = await _retrieve_memory_context(
             db,
             embedding_provider,
@@ -703,7 +792,8 @@ async def chat_stream(
             top_k=settings.memory_retrieval_top_k,
             min_similarity=settings.memory_retrieval_min_similarity,
         )
-    augmented = _augment_messages(body.messages, memory_context)
+    # Standing preferences lead, then the semantic-fact block.
+    augmented = _augment_messages(body.messages, standing_context, memory_context)
 
     # 7f-2: resolve tenant workflows + rebind client + expand operator perms.
     # Runs BEFORE the StreamingResponse is returned, so its short DB read holds
@@ -820,6 +910,7 @@ async def chat_stream(
             user_id=user.id,
             messages=body.messages,
             assistant_reply=assistant_content,
+            dedupe_threshold=settings.memory_dedupe_min_similarity,
         )
 
     return StreamingResponse(

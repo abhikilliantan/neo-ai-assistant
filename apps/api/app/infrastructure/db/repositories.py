@@ -382,6 +382,8 @@ class MemoryRepository:
         organization_id: UUID,
         user_id: UUID,
         active_only: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[Memory]:
         stmt = (
             select(Memory)
@@ -391,6 +393,35 @@ class MemoryRepository:
         if active_only:
             stmt = stmt.where(Memory.deleted_at.is_(None))
         stmt = stmt.order_by(Memory.created_at.desc())
+        # Pagination for GET /memories. `limit=None` preserves the prior
+        # "return everything" behaviour for existing callers.
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_by_kinds(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        kinds: Sequence[str],
+        limit: int,
+    ) -> list[Memory]:
+        """Most-recent live memories of the given kinds, tenant + user scoped.
+
+        Backs the always-on standing-preferences context: no embedding, no
+        similarity — a bare recency-capped fetch of preference/instruction rows
+        so they apply on every turn regardless of the message.
+        """
+        stmt = (
+            select(Memory)
+            .where(Memory.organization_id == organization_id)
+            .where(Memory.user_id == user_id)
+            .where(Memory.deleted_at.is_(None))
+            .where(Memory.kind.in_(tuple(kinds)))
+            .order_by(Memory.created_at.desc())
+            .limit(limit)
+        )
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def get_by_id(self, memory_id: UUID) -> Memory | None:

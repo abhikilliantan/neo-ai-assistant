@@ -35,6 +35,7 @@ from app.ai.tools.dataset_tools import (
 )
 from app.ai.tools.echo import EchoTool
 from app.ai.tools.registry import ToolRegistry
+from app.ai.tools.save_memory import SaveMemoryTool
 from app.ai.tools.search_documents import DocumentRepoFactory, SearchDocumentsTool
 from app.ai.tools.search_memory import MemoryRepoFactory, SearchMemoryTool
 from app.ai.tools.workflow import WorkflowTool
@@ -66,15 +67,22 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     {"echo", "search_memory", "search_documents", "list_datasets", "query_dataset"}
 )
 
+# WRITE tools: a side effect, but scoped ENTIRELY within the caller's own
+# tenant+user (no external system), so lower-risk than workflows. A third
+# classification bucket so `_assert_all_tools_classified` accepts them, while
+# keeping them OUT of the default read-only allow-list — agents opt in by name
+# (assistant + project_analyst list save_memory explicitly; recall does not).
+WRITE_TOOL_NAMES: frozenset[str] = frozenset({"save_memory"})
+
 
 def _assert_all_tools_classified(
     registry: ToolRegistry, workflow_registry: WorkflowRegistry
 ) -> None:
-    """Fail loudly if a registered tool is neither classified read-only nor a
-    workflow (7d). 7d agents derive their permissions from this split, so an
+    """Fail loudly if a registered tool is neither classified read-only/write nor
+    a workflow (7d). 7d agents derive their permissions from this split, so an
     unclassified tool would silently reach the wrong agents — refuse to build.
     """
-    classified = READ_ONLY_TOOL_NAMES | set(workflow_registry.list_names())
+    classified = READ_ONLY_TOOL_NAMES | WRITE_TOOL_NAMES | set(workflow_registry.list_names())
     unknown = sorted({spec["name"] for spec in registry.specs()} - classified)
     if unknown:
         raise RuntimeError(
@@ -149,6 +157,9 @@ def build_request_tool_registry(
             user_id=user_id,
         )
     )
+    # NOTE: save_memory is NOT registered here. This non-streaming builder is
+    # legacy/unused in production (both endpoints use the streaming builder); the
+    # live save_memory wiring is in build_streaming_request_tool_registry below.
     return registry
 
 
@@ -193,6 +204,18 @@ def build_streaming_request_tool_registry(
             user_id=user_id,
         )
     )
+    # save_memory (WRITE): same short-per-call factory — the factory's session
+    # wraps `session.begin()`, so the insert COMMITS when the tool's `async
+    # with` exits. Reaches only the agents that list it (assistant, project_analyst).
+    registry.register(
+        SaveMemoryTool(
+            memory_repo_factory=memory_repo_factory,
+            embedding_provider=embedding_provider,
+            organization_id=organization_id,
+            user_id=user_id,
+            dedupe_threshold=settings.memory_dedupe_min_similarity,
+        )
+    )
     # 8d: search_documents — tenant-scoped (no user_id), bound to the same
     # short-per-call session discipline via its own factory.
     registry.register(
@@ -226,12 +249,14 @@ def build_streaming_request_tool_registry(
 
 __all__ = [
     "READ_ONLY_TOOL_NAMES",
+    "WRITE_TOOL_NAMES",
     "DatasetSessionFactory",
     "DocumentRepoFactory",
     "EchoTool",
     "ListDatasetsTool",
     "MemoryRepoFactory",
     "QueryDatasetTool",
+    "SaveMemoryTool",
     "SearchDocumentsTool",
     "SearchMemoryTool",
     "ToolRegistry",

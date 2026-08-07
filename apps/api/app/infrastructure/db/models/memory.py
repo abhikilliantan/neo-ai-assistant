@@ -29,7 +29,9 @@ if TYPE_CHECKING:
     from app.infrastructure.db.models.tenancy import Organization
 
 
-MEMORY_KINDS = ("fact", "preference", "summary")
+# "summary" retained from the original schema; "instruction"/"other" added by
+# the save-memory feature (migration widens the CHECK to this union).
+MEMORY_KINDS = ("fact", "preference", "summary", "instruction", "other")
 EMBEDDING_DIMENSION = 1024
 
 

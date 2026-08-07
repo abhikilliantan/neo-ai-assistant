@@ -223,6 +223,7 @@ async def test_project_analyst_answers_status_via_query_dataset(db_app) -> None:
         assert set(provider.seen_tools) == {
             "list_datasets",
             "query_dataset",
+            "save_memory",
             "search_documents",
             "search_memory",
         }
