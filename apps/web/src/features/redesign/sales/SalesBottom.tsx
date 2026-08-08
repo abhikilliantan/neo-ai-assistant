@@ -8,7 +8,7 @@ import { DEAL_HEALTH, REGIONS, REPS } from "./data";
 
 export function SalesBottom() {
   return (
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.3fr_1fr_1fr]">
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
       <PerformanceCard />
       <RegionCard />
       <DealHealthCard />
